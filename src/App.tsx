@@ -1,5 +1,8 @@
 import { useMemo, useState, type ChangeEvent } from 'react';
 
+type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
+type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
+
 type AnalysisResult = {
   durationSec?: number | null;
   sampleRate?: number | null;
@@ -12,8 +15,16 @@ type AnalysisResult = {
   highPercent?: number | null;
   lufsEstimate?: number | null;
   score?: number | null;
-  verdicts?: string[] | null;
+  loudnessVerdict?: string;
+  peakSafetyVerdict?: string;
+  clippingVerdict?: string;
+  balanceVerdict?: string;
+  masteringSuggestion?: string;
+  readiness?: ReadinessCategory;
 };
+
+const TARGET_LUFS = -14;
+const SAFE_PEAK_DBFS = -1;
 
 function formatDb(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} dB` : '—';
@@ -33,6 +44,15 @@ function clamp(value: number, min: number, max: number): number {
 
 function hzToBin(hz: number, fftSize: number, sampleRate: number): number {
   return Math.floor((hz / sampleRate) * fftSize);
+}
+
+function getBalanceVerdict(low: number, mid: number, high: number): string {
+  if (low > 44) return 'Boomy low-end emphasis (rough estimate).';
+  if (low < 22) return 'Thin low-end weight (rough estimate).';
+  if (high > 28) return 'Bright / potentially sharp highs (rough estimate).';
+  if (high < 12) return 'Dull top-end (rough estimate).';
+  if (mid < 36) return 'Midrange feels recessed (rough estimate).';
+  return 'Spectral balance appears reasonably balanced (rough estimate).';
 }
 
 async function analyzeAudioFile(file: File): Promise<AnalysisResult> {
@@ -103,25 +123,37 @@ async function analyzeAudioFile(file: File): Promise<AnalysisResult> {
     const highPercent = (high / totalBand) * 100;
 
     const lufsEstimate = rmsDb - 0.7;
+    const loudnessDelta = lufsEstimate - TARGET_LUFS;
 
     let score = 100;
-    score -= clamp(Math.abs((peakDb ?? -2) + 1), 0, 20) * 1.2;
-    score -= clamp(Math.abs((rmsDb ?? -14) + 14), 0, 20) * 1.5;
-    score -= clamp(clippingCount / 500, 0, 20);
-    score -= clamp(Math.abs(midPercent - 55) / 2.5, 0, 20);
+    score -= clamp(Math.abs(peakDb - SAFE_PEAK_DBFS), 0, 20) * 1.3;
+    score -= clamp(Math.abs(loudnessDelta), 0, 12) * 2;
+    score -= clamp(clippingCount / 500, 0, 25);
+    score -= clamp(Math.abs(lowPercent - 30) / 2, 0, 15);
+    score -= clamp(Math.abs(highPercent - 18) / 2, 0, 15);
     score = clamp(score, 0, 100);
 
-    const verdicts: string[] = [];
-    if (clippingCount > 0) verdicts.push('Clipping detected; lower limiter/peak level.');
-    else verdicts.push('No clipping detected.');
+    let loudnessVerdict = `On target. LUFS estimate is within ±1 dB of ${TARGET_LUFS} LUFS.`;
+    if (loudnessDelta > 1) loudnessVerdict = `Too loud by about ${loudnessDelta.toFixed(1)} dB. Reduce gain/limiter output.`;
+    if (loudnessDelta < -1) loudnessVerdict = `Too quiet by about ${Math.abs(loudnessDelta).toFixed(1)} dB. Add gain/limiting.`;
 
-    if (lufsEstimate > -10) verdicts.push('Very loud master; may lose dynamics.');
-    else if (lufsEstimate < -17) verdicts.push('Quiet master; consider increasing loudness.');
-    else verdicts.push('Loudness is in a typical streaming range.');
+    const peakSafetyVerdict = peakDb < SAFE_PEAK_DBFS
+      ? `Safe peak headroom (${formatDb(peakDb)} below -1 dBFS target).`
+      : `Peak is above safe target by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB. Lower ceiling.`;
 
-    if (highPercent > 25) verdicts.push('High-frequency energy is bright.');
-    if (lowPercent > 45) verdicts.push('Low-end is dominant.');
-    if (midPercent < 40) verdicts.push('Midrange may feel recessed.');
+    const clippingVerdict = clippingCount > 0
+      ? `Clipping risk detected (${clippingCount} clipped samples).`
+      : 'No clipping detected in sample data.';
+
+    const balanceVerdict = getBalanceVerdict(lowPercent, midPercent, highPercent);
+
+    let readiness: ReadinessCategory = 'Release Ready';
+    if (clippingCount > 0 || peakDb >= -0.2 || Math.abs(loudnessDelta) > 4) readiness = 'Problem Area';
+    else if (Math.abs(loudnessDelta) > 1.5 || peakDb > SAFE_PEAK_DBFS || lowPercent > 44 || highPercent < 10) readiness = 'Needs Work';
+
+    let masteringSuggestion = 'Minor polish only. Keep headroom and compare against references.';
+    if (readiness === 'Needs Work') masteringSuggestion = 'Adjust gain staging and EQ balance, then re-check loudness and peaks.';
+    if (readiness === 'Problem Area') masteringSuggestion = 'Reduce limiting, fix clipping/ceiling, and rebalance tone before release.';
 
     return {
       durationSec: duration,
@@ -135,37 +167,57 @@ async function analyzeAudioFile(file: File): Promise<AnalysisResult> {
       highPercent,
       lufsEstimate,
       score,
-      verdicts
+      loudnessVerdict,
+      peakSafetyVerdict,
+      clippingVerdict,
+      balanceVerdict,
+      masteringSuggestion,
+      readiness
     };
   } finally {
     await audioContext.close();
   }
 }
 
+function toneForReadiness(value?: ReadinessCategory): BadgeTone {
+  if (value === 'Release Ready') return 'good';
+  if (value === 'Needs Work') return 'warn';
+  if (value === 'Problem Area') return 'bad';
+  return 'info';
+}
+
 export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [status, setStatus] = useState<string>('Choose an audio file to analyze.');
+  const [status, setStatus] = useState<string>('Upload audio to start analysis.');
   const [loading, setLoading] = useState(false);
+  const [fileName, setFileName] = useState<string>('No file selected');
 
-  const safeVerdicts = useMemo(() => {
-    if (!result?.verdicts || !Array.isArray(result.verdicts)) return [];
-    return result.verdicts.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  }, [result]);
+  const verdictItems = useMemo(
+    () => [
+      { label: 'Loudness verdict', text: result?.loudnessVerdict, tone: 'info' as const },
+      { label: 'Peak safety verdict', text: result?.peakSafetyVerdict, tone: 'info' as const },
+      { label: 'Clipping warning', text: result?.clippingVerdict, tone: result?.clippingCount ? 'bad' : 'good' as BadgeTone },
+      { label: 'Low/Mid/High verdict', text: result?.balanceVerdict, tone: 'info' as const },
+      { label: 'Overall mastering suggestion', text: result?.masteringSuggestion, tone: toneForReadiness(result?.readiness) }
+    ].filter((v) => Boolean(v.text)),
+    [result]
+  );
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null;
     if (!file) return;
 
     setLoading(true);
+    setFileName(file.name);
     setStatus(`Analyzing ${file.name}...`);
 
     try {
       const analysis = await analyzeAudioFile(file);
       setResult(analysis);
-      setStatus(`Done: ${file.name}`);
+      setStatus(`Analysis complete for ${file.name}.`);
     } catch {
       setResult(null);
-      setStatus('Could not analyze this file. Try WAV/MP3/M4A/OGG.');
+      setStatus('We could not decode that file. Please try WAV, MP3, M4A, or OGG.');
     } finally {
       setLoading(false);
       event.target.value = '';
@@ -175,38 +227,56 @@ export default function App() {
   return (
     <main className="app-shell">
       <section className="card compact">
-        <header className="card-header">
-          <h1>Studio Sense</h1>
+        <header className="topbar">
+          <div>
+            <h1>Studio Sense</h1>
+            <p className="subhead">Fast browser-based mastering check</p>
+          </div>
           <label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label>
           <input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} />
         </header>
 
+        <section className="workflow-row">
+          <span className="filename">File: {fileName}</span>
+          <span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span>
+        </section>
+
         <p className="status">{status}</p>
 
-        <div className="metrics-grid wide">
+        <section className="metrics-grid">
+          <div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div>
           <div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div>
+          <div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div>
+          <div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div>
+          <div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div>
+          <div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div>
           <div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div>
           <div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div>
           <div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div>
-          <div className="metric"><span>Peak</span><strong>{formatDb(result?.peakDb)}</strong></div>
-          <div className="metric"><span>RMS</span><strong>{formatDb(result?.rmsDb)}</strong></div>
-          <div className="metric"><span>LUFS est.</span><strong>{formatDb(result?.lufsEstimate)}</strong></div>
-          <div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div>
-          <div className="metric"><span>Low / Mid / High</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div>
-        </div>
+          <div className="metric span-2"><span>Low / Mid / High balance (rough)</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div>
+        </section>
 
-        <div className="verdicts">
-          <h2>Verdicts</h2>
-          {safeVerdicts.length > 0 ? (
+        <section className="guidance">
+          <h2>Target guidance</h2>
+          <p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p>
+          <p>Browser-based estimate, not a replacement for studio metering.</p>
+        </section>
+
+        <section className="verdicts">
+          <h2>Professional verdicts</h2>
+          {verdictItems.length > 0 ? (
             <ul>
-              {safeVerdicts.map((item) => (
-                <li key={item}>{item}</li>
+              {verdictItems.map((item) => (
+                <li key={item.label}>
+                  <span className={`pill ${item.tone}`}>{item.label}</span>
+                  <span>{item.text}</span>
+                </li>
               ))}
             </ul>
           ) : (
-            <p className="empty">No verdicts available.</p>
+            <p className="empty">Upload a track to see verdicts.</p>
           )}
-        </div>
+        </section>
       </section>
     </main>
   );
