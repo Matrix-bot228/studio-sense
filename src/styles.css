@@ -138,3 +138,15 @@ input[type='file'] { display: none; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .span-2 { grid-column: span 2; }
 }
+
+button.upload-btn { font-family: inherit; }
+input[type='range'] { width: 100%; margin-top: 8px; accent-color: #4f73ff; }
+.time-input, .note-input {
+  background: #0d1530;
+  border: 1px solid #3951a3;
+  color: #eaf0ff;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.time-input { width: 72px; margin-right: 6px; }
+.note-input { flex: 1; min-width: 180px; }
