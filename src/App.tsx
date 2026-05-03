@@ -326,12 +326,52 @@ export default function App() {
     if (!result || !audioBuffer) return [];
     const trackDuration = result.durationSec ?? duration;
     if (!trackDuration || trackDuration <= 0) return [];
+
     const markers: ProblemMarker[] = buildEstimatedTapeMarkers(audioBuffer, trackDuration);
-    const toneUnusual = (result.lowPercent ?? 30) > 44 || (result.lowPercent ?? 30) < 22 || (result.highPercent ?? 18) > 28 || (result.highPercent ?? 18) < 12 || (result.midPercent ?? 45) < 36;
-    if ((result.peakDb ?? -Infinity) > -1) markers.push({ id: 'peak-risk', timeSec: trackDuration * 0.25, label: 'Peak risk', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
-    if ((result.lufsEstimate ?? TARGET_LUFS) < -16) markers.push({ id: 'too-quiet', timeSec: trackDuration * 0.5, label: 'Too quiet', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'yellow', estimated: true, kind: 'estimated' });
-    if (toneUnusual) markers.push({ id: 'tone-balance', timeSec: trackDuration * 0.75, label: 'Tone balance', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'blue', estimated: true, kind: 'estimated' });
-    if ((result.clippingCount ?? 0) > 0) markers.push({ id: 'clipping', timeSec: trackDuration * 0.9, label: 'Clipping', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
+    const issueSlots = [0.1, 0.3, 0.5, 0.7, 0.9];
+
+    const markerRules = [
+      {
+        id: 'issue-too-quiet',
+        active: (result.lufsEstimate ?? TARGET_LUFS) < -18,
+        label: 'Estimated issue: Too quiet section',
+        explanation: 'Estimated issue from whole-track LUFS reading (below -18 LUFS).'
+      },
+      {
+        id: 'issue-mono',
+        active: (result.channels ?? audioBuffer.numberOfChannels) === 1,
+        label: 'Estimated issue: Mono / low fidelity',
+        explanation: 'Estimated issue from whole-track channel count (mono source).'
+      },
+      {
+        id: 'issue-thin-low-end',
+        active: (result.lowPercent ?? 100) < 20,
+        label: 'Estimated issue: Thin low-end',
+        explanation: 'Estimated issue from whole-track low-end balance (below 20%).'
+      },
+      {
+        id: 'issue-weak-signal',
+        active: (result.rmsDb ?? 0) < -24,
+        label: 'Estimated issue: Weak signal / recording quality',
+        explanation: 'Estimated issue from whole-track RMS level (very low signal strength).'
+      }
+    ];
+
+    let slotIndex = 0;
+    markerRules.forEach((rule) => {
+      if (!rule.active) return;
+      markers.push({
+        id: rule.id,
+        timeSec: trackDuration * issueSlots[Math.min(slotIndex, issueSlots.length - 1)],
+        label: rule.label,
+        explanation: `${rule.explanation} Use your ears to confirm this section.`,
+        color: 'yellow',
+        estimated: true,
+        kind: 'estimated'
+      });
+      slotIndex += 1;
+    });
+
     return markers;
   }, [audioBuffer, duration, result]);
   const userMarkers = useMemo<ProblemMarker[]>(() => problemAreas.map((p) => ({
@@ -345,6 +385,9 @@ export default function App() {
     kind: 'user'
   })), [problemAreas]);
   const allMarkers = useMemo(() => [...estimatedMarkers, ...userMarkers], [estimatedMarkers, userMarkers]);
+  useEffect(() => {
+    console.log('Studio Sense markers before render', allMarkers);
+  }, [allMarkers]);
   const hasAnalyzedTrack = Boolean(result);
 
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
