@@ -42,6 +42,16 @@ type ProblemMarker = {
   endSec?: number;
 };
 
+type WindowSnapshot = {
+  startSec: number;
+  endSec: number;
+  rmsDb: number;
+  peak: number;
+  zcr: number;
+  highBandRatio: number;
+  stereoCorrelation: number | null;
+};
+
 const TARGET_LUFS = -14;
 const SAFE_PEAK_DBFS = -1;
 
@@ -149,6 +159,110 @@ function analyzeRange(audioBuffer: AudioBuffer, startSec = 0, endSec = audioBuff
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] ?? 0 : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+function buildWindowSnapshots(audioBuffer: AudioBuffer, windowSec = 0.75): WindowSnapshot[] {
+  const sampleRate = audioBuffer.sampleRate;
+  const channels = audioBuffer.numberOfChannels;
+  const length = audioBuffer.length;
+  const windowSize = Math.max(1, Math.floor(windowSec * sampleRate));
+  const snapshots: WindowSnapshot[] = [];
+
+  for (let start = 0; start < length; start += windowSize) {
+    const end = Math.min(start + windowSize, length);
+    const count = Math.max(end - start, 1);
+    let sumSq = 0;
+    let peak = 0;
+    let zeroCrossings = 0;
+    let prev = 0;
+    let lowEnergy = 0;
+    let highEnergy = 0;
+    let corr = 0;
+    let leftSq = 0;
+    let rightSq = 0;
+
+    for (let i = start; i < end; i += 1) {
+      let monoSample = 0;
+      for (let ch = 0; ch < channels; ch += 1) monoSample += (audioBuffer.getChannelData(ch)[i] ?? 0) / channels;
+      const abs = Math.abs(monoSample);
+      peak = Math.max(peak, abs);
+      sumSq += monoSample * monoSample;
+      if ((monoSample >= 0 && prev < 0) || (monoSample < 0 && prev >= 0)) zeroCrossings += 1;
+      prev = monoSample;
+
+      const fastDiff = monoSample - (i > start ? (audioBuffer.getChannelData(0)[i - 1] ?? monoSample) : monoSample);
+      highEnergy += fastDiff * fastDiff;
+      lowEnergy += monoSample * monoSample;
+
+      if (channels >= 2) {
+        const left = audioBuffer.getChannelData(0)[i] ?? 0;
+        const right = audioBuffer.getChannelData(1)[i] ?? 0;
+        corr += left * right;
+        leftSq += left * left;
+        rightSq += right * right;
+      }
+    }
+
+    const rms = Math.sqrt(sumSq / count);
+    const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -120;
+    const zcr = zeroCrossings / count;
+    const highBandRatio = highEnergy / Math.max(lowEnergy, Number.EPSILON);
+    const stereoCorrelation = channels >= 2 ? corr / Math.sqrt(Math.max(leftSq * rightSq, Number.EPSILON)) : null;
+    snapshots.push({ startSec: start / sampleRate, endSec: end / sampleRate, rmsDb, peak, zcr, highBandRatio, stereoCorrelation });
+  }
+  return snapshots;
+}
+
+function buildEstimatedTapeMarkers(audioBuffer: AudioBuffer, durationSec: number): ProblemMarker[] {
+  const snapshots = buildWindowSnapshots(audioBuffer, 0.75);
+  if (!snapshots.length) return [];
+
+  const rmsSeries = snapshots.map((s) => s.rmsDb);
+  const peakSeries = snapshots.map((s) => s.peak);
+  const zcrSeries = snapshots.map((s) => s.zcr);
+  const hissSeries = snapshots.map((s) => s.highBandRatio);
+  const medianRms = median(rmsSeries);
+  const medianPeak = median(peakSeries);
+  const medianZcr = median(zcrSeries);
+  const medianHiss = median(hissSeries);
+  const markers: ProblemMarker[] = [];
+
+  const firstQuietHiss = snapshots.find((s) => s.rmsDb < medianRms - 8 && s.highBandRatio > medianHiss * 1.1 && s.zcr > medianZcr * 1.05);
+  if (firstQuietHiss) {
+    markers.push({ id: 'tape-hiss', timeSec: firstQuietHiss.startSec, label: 'Tape hiss / noise floor', explanation: 'Possible constant tape hiss / noise floor detected in a quiet window (estimated).', color: 'yellow', estimated: true, kind: 'estimated' });
+  }
+
+  const handling = snapshots.find((s, index) => {
+    const prev = snapshots[index - 1];
+    if (!prev) return false;
+    return s.peak > Math.max(medianPeak * 2.2, 0.25) && (s.rmsDb - prev.rmsDb) > 8 && s.highBandRatio > medianHiss * 0.9;
+  });
+  if (handling) {
+    markers.push({ id: 'handling-noise', timeSec: handling.startSec, label: 'Possible button press / handling noise', explanation: 'Possible short handling/button press transient detected from sudden non-musical RMS/peak change (estimated).', color: 'red', estimated: true, kind: 'estimated' });
+  }
+
+  const instability = snapshots.find((s, index) => {
+    const prev = snapshots[index - 1];
+    if (!prev) return false;
+    return Math.abs(s.rmsDb - prev.rmsDb) > 5 && s.peak < Math.max(medianPeak * 1.6, 0.2);
+  });
+  if (instability) {
+    markers.push({ id: 'level-instability', timeSec: instability.startSec, label: 'Level instability', explanation: 'Estimated level instability/dropout risk based on abrupt window-to-window RMS shift.', color: 'yellow', estimated: true, kind: 'estimated' });
+  }
+
+  const monoLike = snapshots.find((s) => s.stereoCorrelation !== null && s.stereoCorrelation > 0.985);
+  if (audioBuffer.numberOfChannels <= 1 || monoLike || medianHiss < 0.03) {
+    markers.push({ id: 'low-fidelity', timeSec: durationSec * 0.15, label: 'Low fidelity / mono source', explanation: 'Possible low-fidelity or mostly mono source detected (estimated).', color: 'blue', estimated: true, kind: 'estimated' });
+  }
+
+  return markers;
+}
+
 export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
@@ -209,17 +323,17 @@ export default function App() {
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
   const estimatedMarkers = useMemo<ProblemMarker[]>(() => {
-    if (!result) return [];
+    if (!result || !audioBuffer) return [];
     const trackDuration = result.durationSec ?? duration;
     if (!trackDuration || trackDuration <= 0) return [];
-    const markers: ProblemMarker[] = [];
+    const markers: ProblemMarker[] = buildEstimatedTapeMarkers(audioBuffer, trackDuration);
     const toneUnusual = (result.lowPercent ?? 30) > 44 || (result.lowPercent ?? 30) < 22 || (result.highPercent ?? 18) > 28 || (result.highPercent ?? 18) < 12 || (result.midPercent ?? 45) < 36;
     if ((result.peakDb ?? -Infinity) > -1) markers.push({ id: 'peak-risk', timeSec: trackDuration * 0.25, label: 'Peak risk', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
     if ((result.lufsEstimate ?? TARGET_LUFS) < -16) markers.push({ id: 'too-quiet', timeSec: trackDuration * 0.5, label: 'Too quiet', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'yellow', estimated: true, kind: 'estimated' });
     if (toneUnusual) markers.push({ id: 'tone-balance', timeSec: trackDuration * 0.75, label: 'Tone balance', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'blue', estimated: true, kind: 'estimated' });
     if ((result.clippingCount ?? 0) > 0) markers.push({ id: 'clipping', timeSec: trackDuration * 0.9, label: 'Clipping', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
     return markers;
-  }, [duration, result]);
+  }, [audioBuffer, duration, result]);
   const userMarkers = useMemo<ProblemMarker[]>(() => problemAreas.map((p) => ({
     id: `user-${p.id}`,
     timeSec: p.startSec,
@@ -260,7 +374,7 @@ export default function App() {
 
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
-  <section className="verdicts"><h2>Marked Problem Areas</h2>{problemAreas.length ? <ul>{problemAreas.map((p) => <li key={p.id}><span className="pill bad">Problem area: {formatClock(p.startSec)}–{formatClock(p.endSec)}</span><span>{p.note}. Score {formatScore(p.metrics.score)}. Key verdict: {p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}</span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
+  <section className="verdicts"><h2>Marked Problem Areas</h2>{problemAreas.length || estimatedMarkers.length ? <ul>{[...estimatedMarkers, ...problemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
   <section className="verdicts"><h2>Estimated Problem Markers</h2>{hasAnalyzedTrack ? (estimatedMarkers.length ? <ul>{estimatedMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate estimated markers.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
