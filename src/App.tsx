@@ -161,6 +161,7 @@ export default function App() {
   const [problemAreas, setProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [status, setStatus] = useState('Upload audio to start analysis.');
+  const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
   const [fileName, setFileName] = useState('No file selected');
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
@@ -178,10 +179,13 @@ export default function App() {
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
-    setLoading(true); setFileName(file.name); setStatus(`Analyzing ${file.name}...`);
-    setSectionResult(null); setStartSec(null); setEndSec(null); setProblemAreas([]); setProblemNote('');
+    setLoading(true); setFileName(file.name); setStatus('Audio ready for playback'); setAnalysisStatus('processing');
+    setSectionResult(null); setStartSec(null); setEndSec(null); setProblemAreas([]); setProblemNote(''); setResult(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
+    setAudioBuffer(null);
+    setCurrentTime(0);
+    setDuration(0);
     try {
       const arrayBuffer = await file.arrayBuffer();
       const audioContext = new AudioContext();
@@ -190,9 +194,11 @@ export default function App() {
       setAudioBuffer(decoded);
       const analysis = analyzeRange(decoded, 0, decoded.duration);
       setResult(analysis); setDuration(decoded.duration); setCurrentTime(0);
-      setStatus(`Analysis complete for ${file.name}.`);
+      setStatus('Analysis complete');
+      setAnalysisStatus('complete');
     } catch {
-      setResult(null); setAudioBuffer(null); setStatus('We could not decode that file. Please try WAV, MP3, M4A, or OGG.');
+      setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback');
+      setAnalysisStatus('failed');
     } finally { setLoading(false); event.target.value = ''; }
   }
 
@@ -227,8 +233,8 @@ export default function App() {
   const allMarkers = useMemo(() => [...estimatedMarkers, ...userMarkers], [estimatedMarkers, userMarkers]);
   const hasAnalyzedTrack = Boolean(result);
 
-  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>
+  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
+  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p><p className="status">{analysisStatus === 'processing' ? 'Analysis processing...' : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>
 
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
