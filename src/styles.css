@@ -193,16 +193,17 @@ input[type='range'] { width: 100%; margin-top: 8px; accent-color: #4f73ff; }
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 8px;
-  height: 14px;
+  width: 12px;
+  height: 22px;
   border-radius: 4px;
-  border: 1px solid rgba(240, 245, 255, 0.7);
+  border: 2px solid rgba(240, 245, 255, 0.95);
   cursor: pointer;
-  z-index: 2;
+  z-index: 5;
+  box-shadow: 0 0 0 2px rgba(10, 18, 42, 0.9), 0 0 10px rgba(255, 255, 255, 0.2);
 }
-.timeline-marker.red { background: #ff5d5d; }
-.timeline-marker.yellow { background: #f2c94c; }
-.timeline-marker.blue { background: #5da9ff; }
+.timeline-marker.red { background: #ff2f2f; }
+.timeline-marker.yellow { background: #ffd233; }
+.timeline-marker.blue { background: #2d90ff; }
 .timeline-marker.purple { background: #b07cff; }
 .jump-btn {
   margin-left: 8px;
