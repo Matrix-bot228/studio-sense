@@ -142,8 +142,19 @@ export default function AudioPlayer({ audioUrl, startSec, endSec, timelineMarker
         key={marker.id}
         type="button"
         className={`timeline-marker ${marker.color}`}
-        style={{ left: `${marker.left}%` }}
-        title={`${marker.label} • ${formatClock(marker.timeSec)}${marker.estimated ? ' • estimated marker based on whole-track analysis' : ''}`}
+        style={{
+          position: 'absolute',
+          left: `${(marker.timeSec / Math.max(duration, 0.01)) * 100}%`,
+          top: '-2px',
+          width: '14px',
+          height: '22px',
+          transform: 'translateX(-50%)',
+          border: '1px solid #111',
+          borderRadius: '2px',
+          zIndex: 5,
+          background: marker.color === 'red' ? '#ff2d2d' : marker.color === 'yellow' ? '#ffb020' : '#ffd84d'
+        }}
+        title={marker.label}
         onClick={() => seek(marker.timeSec)}
       />)}
       <input
