@@ -164,3 +164,34 @@ input[type='range'] { width: 100%; margin-top: 8px; accent-color: #4f73ff; }
 .time-input { width: 72px; margin-right: 6px; }
 .note-input { flex: 1; min-width: 180px; }
 .section-verdicts { margin-top: 8px; }
+
+.scrubber-wrap {
+  margin-top: 8px;
+  position: relative;
+  padding: 8px 0;
+}
+
+.selection-highlight {
+  position: absolute;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 99px;
+  background: linear-gradient(90deg, rgba(102, 136, 255, 0.35), rgba(120, 186, 255, 0.55));
+  border: 1px solid rgba(118, 148, 255, 0.7);
+  pointer-events: none;
+}
+
+.scrubber {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  accent-color: #4f73ff;
+  background: transparent;
+}
+
+button.upload-btn:disabled,
+.upload-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
