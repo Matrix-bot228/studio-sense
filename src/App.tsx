@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import AudioPlayer from './AudioPlayer';
 
 type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
 type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
@@ -139,12 +140,10 @@ function analyzeRange(audioBuffer: AudioBuffer, startSec = 0, endSec = audioBuff
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
 export default function App() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [startSec, setStartSec] = useState<number | null>(null);
   const [endSec, setEndSec] = useState<number | null>(null);
   const [sectionResult, setSectionResult] = useState<AnalysisResult | null>(null);
@@ -196,10 +195,13 @@ export default function App() {
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>
 
-  {audioUrl && <section className="guidance"><h2>Audio Player</h2><audio ref={audioRef} src={audioUrl} onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)} onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || duration)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} />
-    <div className="workflow-row"><button className="upload-btn" type="button" onClick={() => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause(); }}>{isPlaying ? 'Pause' : 'Play'}</button><span>{formatClock(currentTime)} / {formatClock(duration)}</span></div>
-    <input type="range" min={0} max={Math.max(duration, 0.01)} step={0.01} value={Math.min(currentTime, duration)} onChange={(e) => { const next = Number(e.target.value); setCurrentTime(next); if (audioRef.current) audioRef.current.currentTime = next; }} />
-  </section>}
+  {audioUrl && <AudioPlayer
+    audioUrl={audioUrl}
+    startSec={startSec}
+    endSec={endSec}
+    onTimeChange={setCurrentTime}
+    onDurationChange={setDuration}
+  />} 
 
   <section className="guidance"><h2>Section selection</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setStartSec(currentTime)} disabled={!audioBuffer}>Mark start</button><button className="upload-btn" type="button" onClick={() => setEndSec(currentTime)} disabled={!audioBuffer}>Mark end</button><button className="upload-btn" type="button" onClick={() => { setStartSec(null); setEndSec(null); setSectionResult(null); }} disabled={!audioBuffer}>Clear section</button></div>
     <div className="metrics-grid"><div className="metric"><span>Start</span><strong>{formatClock(startSec)}</strong></div><div className="metric"><span>End</span><strong>{formatClock(endSec)}</strong></div><div className="metric"><span>Length</span><strong>{hasSelection ? formatClock((endSec ?? 0) - (startSec ?? 0)) : '00:00'}</strong></div><div className="metric"><span>Manual (sec)</span><strong><input className="time-input" type="number" min={0} max={duration} value={startSec ?? 0} onChange={(e) => setStartSec(Number(e.target.value))} /> <input className="time-input" type="number" min={0} max={duration} value={endSec ?? 0} onChange={(e) => setEndSec(Number(e.target.value))} /></strong></div></div>
