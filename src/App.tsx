@@ -5,6 +5,7 @@ type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
 type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
 
 type AnalysisResult = {
+  lufs?: number | null;
   durationSec?: number | null;
   sampleRate?: number | null;
   channels?: number | null;
@@ -155,7 +156,7 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
   if (!(durationSec > 0)) return [];
 
   const candidates = [
-    { active: (result.lufsEstimate ?? 0) < -18, label: 'Too quiet', color: 'red' as const },
+    { active: ((result.lufs ?? result.lufsEstimate) ?? 0) < -18, label: 'Too quiet', color: 'red' as const },
     { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal', color: 'yellow' as const },
     { active: (result.channels ?? 0) === 1, label: 'Mono / low fidelity', color: 'red' as const },
     { active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end', color: 'yellow' as const }
