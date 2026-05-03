@@ -35,6 +35,7 @@ type ProblemMarker = {
   id: string;
   timeSec: number;
   label: string;
+  severity: 'low' | 'medium' | 'high';
   explanation: string;
   color: 'red' | 'yellow' | 'blue' | 'purple';
   estimated: boolean;
@@ -42,15 +43,6 @@ type ProblemMarker = {
   endSec?: number;
 };
 
-type WindowSnapshot = {
-  startSec: number;
-  endSec: number;
-  rmsDb: number;
-  peak: number;
-  zcr: number;
-  highBandRatio: number;
-  stereoCorrelation: number | null;
-};
 
 const TARGET_LUFS = -14;
 const SAFE_PEAK_DBFS = -1;
@@ -159,110 +151,6 @@ function analyzeRange(audioBuffer: AudioBuffer, startSec = 0, endSec = audioBuff
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] ?? 0 : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
-}
-
-function buildWindowSnapshots(audioBuffer: AudioBuffer, windowSec = 0.75): WindowSnapshot[] {
-  const sampleRate = audioBuffer.sampleRate;
-  const channels = audioBuffer.numberOfChannels;
-  const length = audioBuffer.length;
-  const windowSize = Math.max(1, Math.floor(windowSec * sampleRate));
-  const snapshots: WindowSnapshot[] = [];
-
-  for (let start = 0; start < length; start += windowSize) {
-    const end = Math.min(start + windowSize, length);
-    const count = Math.max(end - start, 1);
-    let sumSq = 0;
-    let peak = 0;
-    let zeroCrossings = 0;
-    let prev = 0;
-    let lowEnergy = 0;
-    let highEnergy = 0;
-    let corr = 0;
-    let leftSq = 0;
-    let rightSq = 0;
-
-    for (let i = start; i < end; i += 1) {
-      let monoSample = 0;
-      for (let ch = 0; ch < channels; ch += 1) monoSample += (audioBuffer.getChannelData(ch)[i] ?? 0) / channels;
-      const abs = Math.abs(monoSample);
-      peak = Math.max(peak, abs);
-      sumSq += monoSample * monoSample;
-      if ((monoSample >= 0 && prev < 0) || (monoSample < 0 && prev >= 0)) zeroCrossings += 1;
-      prev = monoSample;
-
-      const fastDiff = monoSample - (i > start ? (audioBuffer.getChannelData(0)[i - 1] ?? monoSample) : monoSample);
-      highEnergy += fastDiff * fastDiff;
-      lowEnergy += monoSample * monoSample;
-
-      if (channels >= 2) {
-        const left = audioBuffer.getChannelData(0)[i] ?? 0;
-        const right = audioBuffer.getChannelData(1)[i] ?? 0;
-        corr += left * right;
-        leftSq += left * left;
-        rightSq += right * right;
-      }
-    }
-
-    const rms = Math.sqrt(sumSq / count);
-    const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -120;
-    const zcr = zeroCrossings / count;
-    const highBandRatio = highEnergy / Math.max(lowEnergy, Number.EPSILON);
-    const stereoCorrelation = channels >= 2 ? corr / Math.sqrt(Math.max(leftSq * rightSq, Number.EPSILON)) : null;
-    snapshots.push({ startSec: start / sampleRate, endSec: end / sampleRate, rmsDb, peak, zcr, highBandRatio, stereoCorrelation });
-  }
-  return snapshots;
-}
-
-function buildEstimatedTapeMarkers(audioBuffer: AudioBuffer, durationSec: number): ProblemMarker[] {
-  const snapshots = buildWindowSnapshots(audioBuffer, 0.75);
-  if (!snapshots.length) return [];
-
-  const rmsSeries = snapshots.map((s) => s.rmsDb);
-  const peakSeries = snapshots.map((s) => s.peak);
-  const zcrSeries = snapshots.map((s) => s.zcr);
-  const hissSeries = snapshots.map((s) => s.highBandRatio);
-  const medianRms = median(rmsSeries);
-  const medianPeak = median(peakSeries);
-  const medianZcr = median(zcrSeries);
-  const medianHiss = median(hissSeries);
-  const markers: ProblemMarker[] = [];
-
-  const firstQuietHiss = snapshots.find((s) => s.rmsDb < medianRms - 8 && s.highBandRatio > medianHiss * 1.1 && s.zcr > medianZcr * 1.05);
-  if (firstQuietHiss) {
-    markers.push({ id: 'tape-hiss', timeSec: firstQuietHiss.startSec, label: 'Tape hiss / noise floor', explanation: 'Possible constant tape hiss / noise floor detected in a quiet window (estimated).', color: 'yellow', estimated: true, kind: 'estimated' });
-  }
-
-  const handling = snapshots.find((s, index) => {
-    const prev = snapshots[index - 1];
-    if (!prev) return false;
-    return s.peak > Math.max(medianPeak * 2.2, 0.25) && (s.rmsDb - prev.rmsDb) > 8 && s.highBandRatio > medianHiss * 0.9;
-  });
-  if (handling) {
-    markers.push({ id: 'handling-noise', timeSec: handling.startSec, label: 'Possible button press / handling noise', explanation: 'Possible short handling/button press transient detected from sudden non-musical RMS/peak change (estimated).', color: 'red', estimated: true, kind: 'estimated' });
-  }
-
-  const instability = snapshots.find((s, index) => {
-    const prev = snapshots[index - 1];
-    if (!prev) return false;
-    return Math.abs(s.rmsDb - prev.rmsDb) > 5 && s.peak < Math.max(medianPeak * 1.6, 0.2);
-  });
-  if (instability) {
-    markers.push({ id: 'level-instability', timeSec: instability.startSec, label: 'Level instability', explanation: 'Estimated level instability/dropout risk based on abrupt window-to-window RMS shift.', color: 'yellow', estimated: true, kind: 'estimated' });
-  }
-
-  const monoLike = snapshots.find((s) => s.stereoCorrelation !== null && s.stereoCorrelation > 0.985);
-  if (audioBuffer.numberOfChannels <= 1 || monoLike || medianHiss < 0.03) {
-    markers.push({ id: 'low-fidelity', timeSec: durationSec * 0.15, label: 'Low fidelity / mono source', explanation: 'Possible low-fidelity or mostly mono source detected (estimated).', color: 'blue', estimated: true, kind: 'estimated' });
-  }
-
-  return markers;
-}
-
 export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
@@ -272,7 +160,7 @@ export default function App() {
   const [endSec, setEndSec] = useState<number | null>(null);
   const [sectionResult, setSectionResult] = useState<AnalysisResult | null>(null);
   const [problemNote, setProblemNote] = useState('');
-  const [problemAreas, setProblemAreas] = useState<ProblemArea[]>([]);
+  const [manualProblemAreas, setManualProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [status, setStatus] = useState('Upload audio to start analysis.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
@@ -294,7 +182,7 @@ export default function App() {
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
     setLoading(true); setFileName(file.name); setStatus('Audio ready for playback'); setAnalysisStatus('processing');
-    setSectionResult(null); setStartSec(null); setEndSec(null); setProblemAreas([]); setProblemNote(''); setResult(null);
+    setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
     setAudioBuffer(null);
@@ -322,59 +210,36 @@ export default function App() {
     sectionResult.lowPercent && result.lowPercent && sectionResult.lowPercent > result.lowPercent ? 'This section has more low-end build-up.' : 'Low-end is not more built-up than full track.',
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
-  const estimatedMarkers = useMemo<ProblemMarker[]>(() => {
+  const problemMarkers = useMemo<ProblemMarker[]>(() => {
     if (!result || !audioBuffer) return [];
     const trackDuration = result.durationSec ?? duration;
     if (!trackDuration || trackDuration <= 0) return [];
 
-    const markers: ProblemMarker[] = buildEstimatedTapeMarkers(audioBuffer, trackDuration);
+    const markers: ProblemMarker[] = [];
     const issueSlots = [0.1, 0.3, 0.5, 0.7, 0.9];
+    const issues = [
+      { id: 'issue-too-quiet', active: (result.lufsEstimate ?? TARGET_LUFS) < -18, label: 'Too quiet section', severity: 'high' as const, color: 'red' as const },
+      { id: 'issue-weak-signal', active: (result.rmsDb ?? 0) < -20, label: 'Weak signal / low recording level', severity: 'medium' as const, color: 'yellow' as const },
+      { id: 'issue-mono', active: (result.channels ?? audioBuffer.numberOfChannels) === 1, label: 'Mono recording / low fidelity', severity: 'medium' as const, color: 'blue' as const },
+      { id: 'issue-thin-low-end', active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end / weak bass', severity: 'medium' as const, color: 'yellow' as const }
+    ].filter((issue) => issue.active);
 
-    const markerRules = [
-      {
-        id: 'issue-too-quiet',
-        active: (result.lufsEstimate ?? TARGET_LUFS) < -18,
-        label: 'Estimated issue: Too quiet section',
-        explanation: 'Estimated issue from whole-track LUFS reading (below -18 LUFS).'
-      },
-      {
-        id: 'issue-mono',
-        active: (result.channels ?? audioBuffer.numberOfChannels) === 1,
-        label: 'Estimated issue: Mono / low fidelity',
-        explanation: 'Estimated issue from whole-track channel count (mono source).'
-      },
-      {
-        id: 'issue-thin-low-end',
-        active: (result.lowPercent ?? 100) < 20,
-        label: 'Estimated issue: Thin low-end',
-        explanation: 'Estimated issue from whole-track low-end balance (below 20%).'
-      },
-      {
-        id: 'issue-weak-signal',
-        active: (result.rmsDb ?? 0) < -24,
-        label: 'Estimated issue: Weak signal / recording quality',
-        explanation: 'Estimated issue from whole-track RMS level (very low signal strength).'
-      }
-    ];
-
-    let slotIndex = 0;
-    markerRules.forEach((rule) => {
-      if (!rule.active) return;
+    issues.forEach((issue, index) => {
       markers.push({
-        id: rule.id,
-        timeSec: trackDuration * issueSlots[Math.min(slotIndex, issueSlots.length - 1)],
-        label: rule.label,
-        explanation: `${rule.explanation} Use your ears to confirm this section.`,
-        color: 'yellow',
+        id: issue.id,
+        timeSec: trackDuration * issueSlots[index % issueSlots.length],
+        label: issue.label,
+        severity: issue.severity,
+        explanation: `Auto-generated from whole-track analysis.`,
+        color: issue.color,
         estimated: true,
         kind: 'estimated'
       });
-      slotIndex += 1;
     });
 
     return markers;
   }, [audioBuffer, duration, result]);
-  const userMarkers = useMemo<ProblemMarker[]>(() => problemAreas.map((p) => ({
+  const userMarkers = useMemo<ProblemMarker[]>(() => manualProblemAreas.map((p) => ({
     id: `user-${p.id}`,
     timeSec: p.startSec,
     endSec: p.endSec,
@@ -382,12 +247,13 @@ export default function App() {
     explanation: p.note || 'User-marked section.',
     color: 'purple',
     estimated: false,
-    kind: 'user'
-  })), [problemAreas]);
-  const allMarkers = useMemo(() => [...estimatedMarkers, ...userMarkers], [estimatedMarkers, userMarkers]);
+    kind: 'user',
+    severity: 'low'
+  })), [manualProblemAreas]);
+  const timelineMarkers = useMemo(() => [...problemMarkers, ...userMarkers], [problemMarkers, userMarkers]);
   useEffect(() => {
-    console.log('Studio Sense markers before render', allMarkers);
-  }, [allMarkers]);
+    console.log(problemMarkers);
+  }, [problemMarkers]);
   const hasAnalyzedTrack = Boolean(result);
 
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
@@ -397,7 +263,7 @@ export default function App() {
     audioUrl={audioUrl}
     startSec={startSec}
     endSec={endSec}
-    timelineMarkers={allMarkers}
+    timelineMarkers={timelineMarkers}
     seekToSec={seekToSec}
     onSeekHandled={() => setSeekToSec(null)}
     onTimeChange={setCurrentTime}
@@ -413,12 +279,12 @@ export default function App() {
     <div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div><div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div><div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div><div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance (rough)</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div>
   </section>
 
-  <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section>
+  <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section>
 
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
-  <section className="verdicts"><h2>Marked Problem Areas</h2>{problemAreas.length || estimatedMarkers.length ? <ul>{[...estimatedMarkers, ...problemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
-  <section className="verdicts"><h2>Estimated Problem Markers</h2>{hasAnalyzedTrack ? (estimatedMarkers.length ? <ul>{estimatedMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate estimated markers.</p>}</section>
+  <section className="verdicts"><h2>Marked Problem Areas</h2>{manualProblemAreas.length || problemMarkers.length ? <ul>{[...problemMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
+  <section className="verdicts"><h2>Generated Problem Markers</h2>{hasAnalyzedTrack ? (problemMarkers.length ? <ul>{problemMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate problem markers.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 </section></main>;
