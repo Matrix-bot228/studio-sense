@@ -221,3 +221,55 @@ button.upload-btn:disabled,
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.release-checklist {
+  margin-top: 12px;
+  border: 1px solid #3f4f8f;
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(24, 33, 67, 0.85) 0%, rgba(13, 20, 43, 0.92) 100%);
+  box-shadow: inset 0 0 0 1px rgba(120, 146, 255, 0.12);
+}
+
+.release-overall {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.release-overall.pass { color: #9af2c4; }
+.release-overall.warning { color: #ffe194; }
+.release-overall.fail { color: #ffb0b0; }
+
+.release-checklist ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.check-item {
+  border: 1px solid #33437d;
+  border-radius: 10px;
+  background: rgba(8, 13, 28, 0.7);
+  padding: 9px 10px;
+}
+
+.check-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.check-item.pass .check-main { color: #9af2c4; }
+.check-item.warning .check-main { color: #ffe194; }
+.check-item.fail .check-main { color: #ffb0b0; }
+
+.check-item p {
+  margin: 6px 0 0 24px;
+  font-size: 0.78rem;
+  color: #d7def6;
+}
