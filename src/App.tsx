@@ -149,6 +149,33 @@ function analyzeRange(audioBuffer: AudioBuffer, startSec = 0, endSec = audioBuff
   return { durationSec: endSec - startSec || duration, sampleRate, channels: numberOfChannels, peakDb, rmsDb, clippingCount, lowPercent, midPercent, highPercent, lufsEstimate, score, loudnessVerdict, peakSafetyVerdict, clippingVerdict, balanceVerdict, masteringSuggestion, readiness };
 }
 
+
+function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
+  const durationSec = result.durationSec ?? 0;
+  if (!(durationSec > 0)) return [];
+
+  const candidates = [
+    { active: (result.lufsEstimate ?? 0) < -18, label: 'Too quiet', color: 'red' as const },
+    { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal', color: 'yellow' as const },
+    { active: (result.channels ?? 0) === 1, label: 'Mono / low fidelity', color: 'red' as const },
+    { active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end', color: 'yellow' as const }
+  ];
+  const slots = [0.1, 0.3, 0.5, 0.7];
+
+  return candidates
+    .filter((c) => c.active)
+    .map((candidate, index) => ({
+      id: `auto-${index}-${candidate.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      timeSec: durationSec * slots[index],
+      label: candidate.label,
+      severity: 'high' as const,
+      explanation: 'Auto-generated from whole-track analysis.',
+      color: candidate.color,
+      estimated: true,
+      kind: 'estimated' as const
+    }));
+}
+
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
 export default function App() {
@@ -162,6 +189,7 @@ export default function App() {
   const [problemNote, setProblemNote] = useState('');
   const [manualProblemAreas, setManualProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
   const [status, setStatus] = useState('Upload audio to start analysis.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
@@ -182,7 +210,7 @@ export default function App() {
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
     setLoading(true); setFileName(file.name); setStatus('Audio ready for playback'); setAnalysisStatus('processing');
-    setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null);
+    setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
     setAudioBuffer(null);
@@ -195,7 +223,10 @@ export default function App() {
       await audioContext.close();
       setAudioBuffer(decoded);
       const analysis = analyzeRange(decoded, 0, decoded.duration);
-      setResult(analysis); setDuration(decoded.duration); setCurrentTime(0);
+      setResult(analysis);
+      const markers = buildProblemMarkers(analysis);
+      setAutoMarkers(markers);
+      setDuration(decoded.duration); setCurrentTime(0);
       setStatus('Analysis complete');
       setAnalysisStatus('complete');
     } catch {
@@ -210,50 +241,6 @@ export default function App() {
     sectionResult.lowPercent && result.lowPercent && sectionResult.lowPercent > result.lowPercent ? 'This section has more low-end build-up.' : 'Low-end is not more built-up than full track.',
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
-  const problemMarkers = useMemo<ProblemMarker[]>(() => {
-    if (!result || !audioBuffer) return [];
-    const trackDuration = result.durationSec ?? duration;
-    if (!trackDuration || trackDuration <= 0) return [];
-
-    const markers: ProblemMarker[] = [];
-    const issueSlots = [0.1, 0.3, 0.5, 0.7, 0.9];
-    const issues = [
-      { id: 'issue-too-quiet', active: (result.lufsEstimate ?? TARGET_LUFS) < -18, label: 'Too quiet section', severity: 'high' as const, color: 'red' as const },
-      { id: 'issue-weak-signal', active: (result.rmsDb ?? 0) < -20, label: 'Weak signal / low recording level', severity: 'medium' as const, color: 'yellow' as const },
-      { id: 'issue-mono', active: (result.channels ?? audioBuffer.numberOfChannels) === 1, label: 'Mono recording / low fidelity', severity: 'medium' as const, color: 'blue' as const },
-      { id: 'issue-thin-low-end', active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end / weak bass', severity: 'medium' as const, color: 'yellow' as const }
-    ].filter((issue) => issue.active);
-
-    issues.forEach((issue, index) => {
-      markers.push({
-        id: issue.id,
-        timeSec: trackDuration * issueSlots[index % issueSlots.length],
-        label: issue.label,
-        severity: issue.severity,
-        explanation: `Auto-generated from whole-track analysis.`,
-        color: issue.color,
-        estimated: true,
-        kind: 'estimated'
-      });
-    });
-
-    return markers;
-  }, [audioBuffer, duration, result]);
-  const userMarkers = useMemo<ProblemMarker[]>(() => manualProblemAreas.map((p) => ({
-    id: `user-${p.id}`,
-    timeSec: p.startSec,
-    endSec: p.endSec,
-    label: 'User problem marker',
-    explanation: p.note || 'User-marked section.',
-    color: 'purple',
-    estimated: false,
-    kind: 'user',
-    severity: 'low'
-  })), [manualProblemAreas]);
-  const timelineMarkers = useMemo(() => [...problemMarkers, ...userMarkers], [problemMarkers, userMarkers]);
-  useEffect(() => {
-    console.log(problemMarkers);
-  }, [problemMarkers]);
   const hasAnalyzedTrack = Boolean(result);
 
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
@@ -263,7 +250,7 @@ export default function App() {
     audioUrl={audioUrl}
     startSec={startSec}
     endSec={endSec}
-    timelineMarkers={timelineMarkers}
+    timelineMarkers={autoMarkers}
     seekToSec={seekToSec}
     onSeekHandled={() => setSeekToSec(null)}
     onTimeChange={setCurrentTime}
@@ -283,8 +270,8 @@ export default function App() {
 
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
-  <section className="verdicts"><h2>Marked Problem Areas</h2>{manualProblemAreas.length || problemMarkers.length ? <ul>{[...problemMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
-  <section className="verdicts"><h2>Generated Problem Markers</h2>{hasAnalyzedTrack ? (problemMarkers.length ? <ul>{problemMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate problem markers.</p>}</section>
+  <section className="verdicts"><h2>Marked Problem Areas</h2><p className="status">Auto markers: {autoMarkers.length}</p>{manualProblemAreas.length || autoMarkers.length ? <ul>{[...autoMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
+  <section className="verdicts"><h2>Generated Problem Markers</h2>{hasAnalyzedTrack ? (autoMarkers.length ? <ul>{autoMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate problem markers.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 </section></main>;
