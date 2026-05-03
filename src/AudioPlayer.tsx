@@ -4,6 +4,9 @@ type AudioPlayerProps = {
   audioUrl: string | null;
   startSec: number | null;
   endSec: number | null;
+  timelineMarkers?: Array<{ id: string; timeSec: number; label: string; color: 'red' | 'yellow' | 'blue' | 'purple'; estimated?: boolean }>;
+  seekToSec?: number | null;
+  onSeekHandled?: () => void;
   onTimeChange: (time: number) => void;
   onDurationChange: (duration: number) => void;
 };
@@ -19,7 +22,7 @@ function formatClock(seconds: number | null | undefined): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function AudioPlayer({ audioUrl, startSec, endSec, onTimeChange, onDurationChange }: AudioPlayerProps) {
+export default function AudioPlayer({ audioUrl, startSec, endSec, timelineMarkers = [], seekToSec = null, onSeekHandled, onTimeChange, onDurationChange }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -54,6 +57,21 @@ export default function AudioPlayer({ audioUrl, startSec, endSec, onTimeChange, 
     const right = clamp(((endSec ?? 0) / duration) * 100, 0, 100);
     return { left: `${left}%`, width: `${Math.max(right - left, 0)}%` };
   }, [duration, endSec, hasSelection, startSec]);
+  const markerStyles = useMemo(
+    () => timelineMarkers.map((marker) => {
+      const left = duration > 0 ? clamp((marker.timeSec / duration) * 100, 0, 100) : 0;
+      return { ...marker, left };
+    }),
+    [duration, timelineMarkers]
+  );
+
+  useEffect(() => {
+    if (typeof seekToSec === 'number' && Number.isFinite(seekToSec)) {
+      seek(seekToSec);
+      onSeekHandled?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekToSec]);
 
   function syncCurrentTime(nextTime: number): void {
     setCurrentTime(nextTime);
@@ -120,6 +138,14 @@ export default function AudioPlayer({ audioUrl, startSec, endSec, onTimeChange, 
 
     <div className="scrubber-wrap">
       {selectionStyle ? <div className="selection-highlight" style={selectionStyle} /> : null}
+      {markerStyles.map((marker) => <button
+        key={marker.id}
+        type="button"
+        className={`timeline-marker ${marker.color}`}
+        style={{ left: `${marker.left}%` }}
+        title={`${marker.label} • ${formatClock(marker.timeSec)}${marker.estimated ? ' • estimated marker based on whole-track analysis' : ''}`}
+        onClick={() => seek(marker.timeSec)}
+      />)}
       <input
         className="scrubber"
         type="range"

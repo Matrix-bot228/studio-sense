@@ -31,6 +31,16 @@ type ProblemArea = {
   note: string;
   metrics: AnalysisResult;
 };
+type ProblemMarker = {
+  id: string;
+  timeSec: number;
+  label: string;
+  explanation: string;
+  color: 'red' | 'yellow' | 'blue' | 'purple';
+  estimated: boolean;
+  kind: 'estimated' | 'user';
+  endSec?: number;
+};
 
 const TARGET_LUFS = -14;
 const SAFE_PEAK_DBFS = -1;
@@ -153,6 +163,7 @@ export default function App() {
   const [status, setStatus] = useState('Upload audio to start analysis.');
   const [loading, setLoading] = useState(false);
   const [fileName, setFileName] = useState('No file selected');
+  const [seekToSec, setSeekToSec] = useState<number | null>(null);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
 
@@ -191,6 +202,29 @@ export default function App() {
     sectionResult.lowPercent && result.lowPercent && sectionResult.lowPercent > result.lowPercent ? 'This section has more low-end build-up.' : 'Low-end is not more built-up than full track.',
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
+  const estimatedMarkers = useMemo<ProblemMarker[]>(() => {
+    if (!result) return [];
+    const trackDuration = result.durationSec ?? duration;
+    if (!trackDuration || trackDuration <= 0) return [];
+    const markers: ProblemMarker[] = [];
+    const toneUnusual = (result.lowPercent ?? 30) > 44 || (result.lowPercent ?? 30) < 22 || (result.highPercent ?? 18) > 28 || (result.highPercent ?? 18) < 12 || (result.midPercent ?? 45) < 36;
+    if ((result.peakDb ?? -Infinity) > -1) markers.push({ id: 'peak-risk', timeSec: trackDuration * 0.25, label: 'Peak risk', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
+    if ((result.lufsEstimate ?? TARGET_LUFS) < -16) markers.push({ id: 'too-quiet', timeSec: trackDuration * 0.5, label: 'Too quiet', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'yellow', estimated: true, kind: 'estimated' });
+    if (toneUnusual) markers.push({ id: 'tone-balance', timeSec: trackDuration * 0.75, label: 'Tone balance', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'blue', estimated: true, kind: 'estimated' });
+    if ((result.clippingCount ?? 0) > 0) markers.push({ id: 'clipping', timeSec: trackDuration * 0.9, label: 'Clipping', explanation: 'Estimated marker based on whole-track analysis. Use your ears to confirm this section.', color: 'red', estimated: true, kind: 'estimated' });
+    return markers;
+  }, [duration, result]);
+  const userMarkers = useMemo<ProblemMarker[]>(() => problemAreas.map((p) => ({
+    id: `user-${p.id}`,
+    timeSec: p.startSec,
+    endSec: p.endSec,
+    label: 'User problem marker',
+    explanation: p.note || 'User-marked section.',
+    color: 'purple',
+    estimated: false,
+    kind: 'user'
+  })), [problemAreas]);
+  const allMarkers = useMemo(() => [...estimatedMarkers, ...userMarkers], [estimatedMarkers, userMarkers]);
 
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>
@@ -199,6 +233,9 @@ export default function App() {
     audioUrl={audioUrl}
     startSec={startSec}
     endSec={endSec}
+    timelineMarkers={allMarkers}
+    seekToSec={seekToSec}
+    onSeekHandled={() => setSeekToSec(null)}
     onTimeChange={setCurrentTime}
     onDurationChange={setDuration}
   />} 
@@ -217,6 +254,7 @@ export default function App() {
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
   <section className="verdicts"><h2>Marked Problem Areas</h2>{problemAreas.length ? <ul>{problemAreas.map((p) => <li key={p.id}><span className="pill bad">Problem area: {formatClock(p.startSec)}–{formatClock(p.endSec)}</span><span>{p.note}. Score {formatScore(p.metrics.score)}. Key verdict: {p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}</span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
+  <section className="verdicts"><h2>Estimated Problem Markers</h2>{allMarkers.length ? <ul>{allMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : m.color === 'blue' ? 'info' : 'info'}`}>{m.kind === 'user' ? `User marker: ${formatClock(m.timeSec)}-${formatClock(m.endSec)}` : `${m.label}: ${formatClock(m.timeSec)}`}</span><span>{m.explanation} {m.kind === 'estimated' ? '' : 'Use your ears to confirm this section.'} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No markers yet. Run whole-track analysis or mark a section as a problem area.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 </section></main>;
