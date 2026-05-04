@@ -126,6 +126,90 @@ function detectAudioType(result: AnalysisResult | null): string {
   return 'Standard recording';
 }
 
+
+function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; avoid: string[]; readiness: string[] } {
+  const wrong: string[] = [];
+  const matters: string[] = [];
+  const first: string[] = [];
+  const avoid: string[] = [];
+  const readiness: string[] = [];
+
+  const lufs = result.lufsEstimate ?? result.lufs;
+  const peak = result.peakDb;
+  const rms = result.rmsDb;
+  const channels = result.channels ?? 0;
+  const low = result.lowPercent;
+  const mid = result.midPercent;
+  const high = result.highPercent;
+  const clippingCount = result.clippingCount ?? 0;
+
+  if (typeof lufs === 'number' && lufs < -16) {
+    wrong.push('This track is too quiet for release.');
+    matters.push('It may sound weak next to songs on Spotify or YouTube.');
+    first.push('Add gentle gain or limiting in small steps, and compare with a reference track.');
+  }
+  if (typeof peak === 'number' && peak > -1) {
+    wrong.push('The loudest peaks are too hot.');
+    matters.push('Peaks this high can cause distortion after encoding.');
+    first.push('Set your limiter/output ceiling to -1 dBFS or lower.');
+  }
+  if (clippingCount > 0) {
+    wrong.push('Clipping was detected in this file.');
+    matters.push('Clipping can add crackle and harsh edges that listeners notice quickly.');
+    first.push('Reduce limiter drive or master gain, then export and re-check clipping count.');
+  }
+  if (typeof low === 'number' && low < 22) {
+    wrong.push('The low-end is thin.');
+    matters.push('The track may feel small or lacking warmth.');
+    first.push('Try a small low-end EQ boost around 80–150 Hz, then level-match and listen again.');
+  }
+  if (typeof low === 'number' && low > 44) {
+    wrong.push('There is too much low-end buildup.');
+    matters.push('Boomy bass can mask vocals and reduce clarity on small speakers.');
+    first.push('Cut muddy lows gently before adding more loudness.');
+  }
+  if (typeof high === 'number' && high < 18) {
+    wrong.push('The high-end is a bit muted.');
+    matters.push('Muted highs can reduce clarity and sparkle.');
+    first.push('Use a gentle high-shelf boost and stop as soon as clarity improves.');
+  }
+  if (channels === 1) {
+    wrong.push('This file is mono.');
+    matters.push('Mono can feel narrow compared with modern stereo releases.');
+    first.push('Confirm mono is intentional before trying any widening.');
+    avoid.push('Do not over-compress this recording because mono and low-fidelity sources break up faster.');
+  }
+  if (typeof rms === 'number' && rms < -21) {
+    wrong.push('The average signal level is very low.');
+    matters.push('Low RMS often means weak presence and higher noise risk when boosted.');
+    first.push('Recommended first step: clean noise, then rebalance EQ, then adjust loudness.');
+    avoid.push('Do not stack heavy compression and limiting at the same time on a weak source.');
+  }
+  if (typeof mid === 'number' && mid > 65) {
+    avoid.push('Do not keep boosting mids if the track already sounds boxy.');
+  }
+
+  if (!avoid.length) {
+    avoid.push('Do not chase loudness first—fix clipping and tonal balance before final limiting.');
+  }
+
+  const readinessLabel = result.readiness ?? 'Needs Work';
+  const scoreText = typeof result.score === 'number' ? `${Math.round(result.score)} / 100` : 'not scored yet';
+  readiness.push(`Current release readiness: ${readinessLabel} (${scoreText}).`);
+  if (result.masteringSuggestion) readiness.push(`Mastering suggestion: ${result.masteringSuggestion}`);
+  if (result.loudnessVerdict) readiness.push(`Loudness check: ${result.loudnessVerdict}`);
+  if (result.balanceVerdict) readiness.push(`Balance check: ${result.balanceVerdict}`);
+  if (result.clippingVerdict) readiness.push(`Clipping check: ${result.clippingVerdict}`);
+
+  if (!wrong.length) {
+    wrong.push('No major issues were detected in the current analysis.');
+    matters.push('Your loudness, peaks, and balance look close to release-safe ranges.');
+    first.push('Do one last reference check on headphones and speakers before release.');
+  }
+
+  return { wrong, matters, first, avoid, readiness };
+}
+
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
 function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
@@ -310,6 +394,7 @@ export default function App() {
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
+  const autoFixPlan = result ? buildAutoFixPlan(result) : null;
   const soundProfile = buildSoundProfile(result);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
@@ -405,6 +490,7 @@ export default function App() {
 
   <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
+  <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
   <section className="guidance"><details><summary>Show technical details</summary>{result ? <div className="technical-details"><p>LUFS estimate: {formatDb(result.lufsEstimate)}</p><p>RMS dB: {formatDb(result.rmsDb)}</p><p>Channels: {formatNumber(result.channels, 0)}</p><p>Low / Mid / High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</p><p>Markers debug: {combinedProblemMarkers.map((m) => `${m.label}@${formatClock(m.timeSec)} (${m.kind})`).join(', ') || 'none'}</p></div> : <p className="empty">No analysis yet.</p>}</details></section>
 
