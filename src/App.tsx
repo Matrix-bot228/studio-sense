@@ -244,6 +244,26 @@ export default function App() {
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+
+  const markerGuidance: Record<string, { explanation: string; fix: string }> = {
+    'Too quiet': {
+      explanation: 'This part may sound too low compared with streaming tracks.',
+      fix: 'Increase gain gently or use a limiter.'
+    },
+    'Weak signal': {
+      explanation: 'This section lacks strength and presence.',
+      fix: 'Try compression, gain boost, or use a cleaner source if possible.'
+    },
+    'Mono / low fidelity': {
+      explanation: 'This section sounds narrow or old-source quality.',
+      fix: 'Add subtle stereo width, reverb, or re-record from a better source.'
+    },
+    'Thin low-end': {
+      explanation: 'Bass and warmth are weak in this section.',
+      fix: 'Add low-end EQ around 60–120 Hz or strengthen bass/kick.'
+    }
+  };
 
   return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p><p className="status">{analysisStatus === 'processing' ? 'Analysis processing...' : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>
@@ -274,8 +294,7 @@ export default function App() {
 
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
-  <section className="verdicts"><h2>Marked Problem Areas</h2><p className="status">Auto markers: {autoMarkers.length}</p><div className="status"><p>Has result: {result ? 'YES' : 'NO'}</p><p>Result keys: {result ? Object.keys(result).join(', ') : 'N/A'}</p><p>LUFS value: {result?.lufsEstimate ?? 'N/A'}</p><p>RMS value: {result?.rmsDb ?? 'N/A'}</p><p>Channels: {result?.channels ?? 'N/A'}</p><p>Low balance: {result?.lowPercent ?? 'N/A'}</p><p>Auto markers count: {autoMarkers.length}</p></div>{manualProblemAreas.length || autoMarkers.length ? <ul>{[...autoMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: `Problem area: ${formatClock(p.startSec)}–${formatClock(p.endSec)}`, note: `${p.note}. Score ${formatScore(p.metrics.score)}. Key verdict: ${p.metrics.masteringSuggestion ?? p.metrics.clippingVerdict ?? 'Review section metrics.'}`, timeSec: p.startSec, estimated: false }))].map((item) => <li key={item.id}><span className={`pill ${item.estimated ? 'warn' : 'bad'}`}>{item.label}{'timeSec' in item ? `: ${formatClock(item.timeSec)}` : ''}</span><span>{'explanation' in item ? item.explanation : item.note} <button className="jump-btn" type="button" onClick={() => setSeekToSec(item.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No marked areas yet.</p>}</section>
-  <section className="verdicts"><h2>Generated Problem Markers</h2>{hasAnalyzedTrack ? (autoMarkers.length ? <ul>{autoMarkers.map((m) => <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label}: {formatClock(m.timeSec)}</span><span>{m.explanation} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>)}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate problem markers.</p>}</section>
+  <section className="verdicts"><h2>Problems Found</h2>{hasAnalyzedTrack ? ([...autoMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: 'Custom problem area', timeSec: p.startSec, color: 'purple' as const, explanation: p.note || 'Marked from selected section.', estimated: false }))].length ? <ul>{[...autoMarkers, ...manualProblemAreas.map((p) => ({ id: p.id, label: 'Custom problem area', timeSec: p.startSec, color: 'purple' as const, explanation: p.note || 'Marked from selected section.', estimated: false }))].map((m) => { const guidance = markerGuidance[m.label] ?? { explanation: m.explanation, fix: 'Review this section and compare against a reference track.' }; return <li key={m.id}><span className={`pill ${m.color === 'red' ? 'bad' : m.color === 'yellow' ? 'warn' : 'info'}`}>{m.label} — {formatClock(m.timeSec)}</span><span>{guidance.explanation} <strong>Fix:</strong> {guidance.fix} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>; })}</ul> : <p className="empty">No estimated markers for this track.</p>) : <p className="empty">Upload a track to generate problem markers.</p>}<details className="status"><summary><button className="jump-btn" type="button" onClick={(e) => { e.preventDefault(); setShowTechnicalDetails((prev) => !prev); }}>{showTechnicalDetails ? 'Hide technical details' : 'Show technical details'}</button></summary>{showTechnicalDetails && <div><p>LUFS value: {result?.lufsEstimate ?? 'N/A'}</p><p>RMS value: {result?.rmsDb ?? 'N/A'}</p><p>Channels: {result?.channels ?? 'N/A'}</p><p>Low balance: {result?.lowPercent ?? 'N/A'}</p><p>Auto markers count: {autoMarkers.length}</p></div>}</details></section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 </section></main>;
