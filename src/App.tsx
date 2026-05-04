@@ -157,10 +157,10 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
   if (!(durationSec > 0)) return [];
 
   const candidates = [
-    { active: ((result.lufs ?? result.lufsEstimate) ?? 0) < -18, label: 'Too quiet', color: 'red' as const },
-    { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal', color: 'yellow' as const },
-    { active: (result.channels ?? 0) === 1, label: 'Mono / low fidelity', color: 'red' as const },
-    { active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end', color: 'yellow' as const }
+    { active: ((result.lufs ?? result.lufsEstimate) ?? 0) < -18, label: 'Too quiet → +8 dB gain', color: 'red' as const },
+    { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal → Normalize audio', color: 'yellow' as const },
+    { active: (result.channels ?? 0) === 1, label: 'Mono → Add stereo width', color: 'red' as const },
+    { active: (result.lowPercent ?? 100) < 20, label: 'Thin low-end → Boost 80–150 Hz', color: 'yellow' as const }
   ];
   const slots = [0.1, 0.3, 0.5, 0.7];
 
@@ -182,23 +182,21 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
 function buildSoundProfile(result: AnalysisResult | null): string {
   if (!result) return '—';
 
-  const labels: string[] = [];
+  const phrases: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
 
-  if ((result.clippingCount ?? 0) > 0) labels.push('Distorted');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) labels.push('Weak');
-  if (typeof lufs === 'number' && lufs < -20) labels.push('Quiet');
-  if ((result.channels ?? 0) === 1) labels.push('Mono / Flat');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) labels.push('Thin');
-  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) labels.push('Boomy');
-  if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) labels.push('Low fidelity');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) phrases.push('weak');
+  if (typeof lufs === 'number' && lufs < -20) phrases.push('quiet');
+  if ((result.channels ?? 0) === 1) phrases.push('mono');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) phrases.push('thin');
+  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) phrases.push('boomy');
+  if ((result.clippingCount ?? 0) > 0) phrases.push('distorted');
 
-  if (!labels.length) return 'Clean and balanced mix';
+  if (!phrases.length) return 'Balanced and clean mix.';
 
-  const uniqueLabels = [...new Set(labels)];
-  if (uniqueLabels.length === 1) return `${uniqueLabels[0]} recording`;
-  if (uniqueLabels.length === 2) return `${uniqueLabels[0]} and ${uniqueLabels[1]} recording`;
-  return `${uniqueLabels.slice(0, -1).join(', ')}, and ${uniqueLabels[uniqueLabels.length - 1]} recording`;
+  const unique = [...new Set(phrases)];
+  const joined = unique.length === 1 ? unique[0] : `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
+  return `${joined} recording.`;
 }
 
 function buildWhyItSoundsThisWay(result: AnalysisResult | null): string[] {
@@ -206,9 +204,9 @@ function buildWhyItSoundsThisWay(result: AnalysisResult | null): string[] {
   const reasons: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
   if (typeof lufs === 'number' && lufs < -20) reasons.push('Low volume makes the audio sound distant.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) reasons.push('Weak signal strength reduces punch and clarity.');
-  if ((result.channels ?? 0) === 1) reasons.push('Mono recording removes stereo depth and feels flat.');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) reasons.push('Lack of low frequencies makes the tone thin.');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) reasons.push('Weak signal reduces presence and clarity.');
+  if ((result.channels ?? 0) === 1) reasons.push('Mono removes stereo width and depth.');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) reasons.push('Lack of low frequencies makes it sound thin.');
   if (typeof result.lowPercent === 'number' && result.lowPercent > 60) reasons.push('Too much low-end energy makes the mix boomy.');
   if ((result.clippingCount ?? 0) > 0) reasons.push('Clipping on peaks can cause audible distortion.');
   if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) reasons.push('Lower sample rate can reduce detail and openness.');
@@ -220,25 +218,23 @@ function buildFixSuggestions(result: AnalysisResult | null): string[] {
   if (!result) return [];
   const fixes: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
-  if (typeof lufs === 'number' && lufs < -20) fixes.push('Quiet → Increase gain or apply limiter (+6 to +10 dB)');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) fixes.push('Weak signal → Normalize audio or re-record at higher input level');
-  if ((result.channels ?? 0) === 1) fixes.push('Mono / Flat → Convert to stereo or add stereo widening');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Thin → Boost low frequencies (80–150 Hz)');
-  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) fixes.push('Boomy → Reduce low frequencies (cut 80–200 Hz)');
-  if ((result.clippingCount ?? 0) > 0) fixes.push('Clipping → Lower limiter ceiling (-1 dB) and reduce gain');
+  if (typeof lufs === 'number' && lufs < -20) fixes.push('Increase gain (+6 to +10 dB)');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) fixes.push('Normalize audio or re-record with stronger input');
+  if ((result.channels ?? 0) === 1) fixes.push('Convert to stereo or apply stereo widening plugin');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Boost low-end (80–150 Hz)');
+  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) fixes.push('Reduce low-end (cut 80–200 Hz)');
+  if ((result.clippingCount ?? 0) > 0) fixes.push('Lower limiter ceiling to -1 dB and reduce gain');
   if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) fixes.push('Low fidelity → Use noise reduction and EQ cleanup');
   return fixes;
 }
 
 function detectAudioType(result: AnalysisResult | null): string {
   if (!result) return '—';
-  const lufs = result.lufs ?? result.lufsEstimate;
-  const weak = (typeof lufs === 'number' && lufs < -20) || ((result.rmsDb ?? 0) < -20);
-  const mono = (result.channels ?? 0) === 1;
-  const balanced = (result.lowPercent ?? 0) >= 20 && (result.lowPercent ?? 0) <= 45 && (result.clippingCount ?? 0) === 0;
-  if (mono && weak && (result.rmsDb ?? 0) < -20) return 'Likely old recording / tape / phone capture';
-  if (!mono && balanced && (lufs ?? -99) > -18) return 'Modern digital recording';
-  return 'Mixed characteristics (part modern, part archival)';
+  const channels = result.channels ?? 0;
+  const rms = result.rmsDb ?? -99;
+  if (channels === 1 && rms < -20) return 'Likely old recording / phone / tape source';
+  if (channels === 2 && rms > -18) return 'Modern digital recording';
+  return 'Mixed recording characteristics';
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
@@ -373,25 +369,25 @@ export default function App() {
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
-    'Too quiet': {
+    'Too quiet → +8 dB gain': {
       title: 'Volume too low',
       explanation: 'This part may sound too quiet compared with other songs.',
       fix: 'Increase gain +8 dB',
       badgeTone: 'bad'
     },
-    'Weak signal': {
+    'Weak signal → Normalize audio': {
       title: 'Weak recording quality',
       explanation: 'This section lacks strength and presence.',
-      fix: 'Normalize or re-record louder',
+      fix: 'Normalize audio',
       badgeTone: 'warn'
     },
-    'Mono / low fidelity': {
+    'Mono → Add stereo width': {
       title: 'Flat / mono sound',
       explanation: 'The sound feels narrow and has little stereo space.',
       fix: 'Add stereo width',
       badgeTone: 'warn'
     },
-    'Thin low-end': {
+    'Thin low-end → Boost 80–150 Hz': {
       title: 'Lacks bass / thin sound',
       explanation: 'Bass and warmth are weak here.',
       fix: 'Boost low frequencies around 80–150 Hz.',
@@ -438,7 +434,8 @@ export default function App() {
   />} 
 
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p><p><strong>Audio type:</strong> {audioType}</p></section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
+  <section className="sound-profile-card"><h2>Audio Type</h2><p>{audioType}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
