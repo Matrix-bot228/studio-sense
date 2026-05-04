@@ -65,6 +65,9 @@ function formatClock(seconds: number | null | undefined): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 type WorkerAudioData = { channels: Float32Array[]; sampleRate: number; durationSec: number };
+type WorkerRequest =
+  | { type: 'analyze'; payload: WorkerAudioData }
+  | { type: 'analyzeSection'; payload: WorkerAudioData & { startSec: number; endSec: number } };
 
 
 function buildSoundProfile(result: AnalysisResult | null): string {
@@ -201,17 +204,49 @@ export default function App() {
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState('Idle');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [largeFileWarning, setLargeFileWarning] = useState('');
   const [fileName, setFileName] = useState('No file selected');
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
   useEffect(() => {
     workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
-    return () => workerRef.current?.terminate();
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
   }, []);
+
+  const runWorkerRequest = useCallback((request: WorkerRequest, transfer: Transferable[] = []) => new Promise<MessageEvent>((resolve, reject) => {
+    const worker = workerRef.current;
+    if (!worker) {
+      reject(new Error('Worker unavailable'));
+      return;
+    }
+    const requestId = ++requestIdRef.current;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.requestId !== requestId) return;
+      if (event.data.type === 'stage') {
+        setAnalysisStage(event.data.stage);
+        return;
+      }
+      worker.removeEventListener('message', handleMessage);
+      worker.removeEventListener('error', handleError);
+      resolve(event);
+    };
+    const handleError = () => {
+      worker.removeEventListener('message', handleMessage);
+      worker.removeEventListener('error', handleError);
+      reject(new Error('Worker failed'));
+    };
+    worker.addEventListener('message', handleMessage);
+    worker.addEventListener('error', handleError);
+    worker.postMessage({ ...request, requestId }, transfer);
+  }), []);
 
   const hasSelection = startSec !== null && endSec !== null && endSec > startSec;
   const verdictItems = useMemo(() => [
@@ -224,7 +259,7 @@ export default function App() {
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
-    setLoading(true); setFileName(file.name); setStatus('Analyzing audio… please wait'); setAnalysisStatus('processing'); setAnalysisStage('Loading audio'); setLargeFileWarning('');
+    setLoading(true); setIsAnalyzing(true); setFileName(file.name); setStatus('Analyzing…'); setAnalysisStatus('processing'); setAnalysisStage('Loading audio'); setLargeFileWarning('');
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
@@ -240,46 +275,32 @@ export default function App() {
       const channels = Array.from({ length: decoded.numberOfChannels }, (_, i) => new Float32Array(decoded.getChannelData(i)));
       const workerData = { channels, sampleRate: decoded.sampleRate, durationSec: decoded.duration };
       audioDataRef.current = workerData;
-      const worker = workerRef.current;
-      if (!worker) throw new Error('Worker unavailable');
       setAnalysisStage('Reading waveform');
-      await new Promise<void>((resolve, reject) => {
-        worker.onmessage = (msg: MessageEvent) => {
-          if (msg.data.type === 'stage') setAnalysisStage(msg.data.stage);
-          if (msg.data.type === 'done') {
-            setResult(msg.data.result);
-            setAutoMarkers(msg.data.markers);
-            if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
-            resolve();
-          }
-        };
-        worker.onerror = () => reject(new Error('worker failed'));
-        worker.postMessage({ type: 'analyze', payload: workerData });
-      });
+      const transfer = channels.map((channel) => channel.buffer as Transferable);
+      const msg = await runWorkerRequest({ type: 'analyze', payload: workerData }, transfer);
+      if (msg.data.type !== 'done') throw new Error('Invalid worker response');
+      setResult(msg.data.result);
+      setAutoMarkers(msg.data.markers);
+      if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
       setDuration(decoded.duration); setCurrentTime(0);
       setStatus('Analysis complete');
       setAnalysisStatus('complete');
     } catch {
       setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null;
       setAnalysisStatus('failed');
-    } finally { setLoading(false); event.target.value = ''; }
+    } finally { setLoading(false); setIsAnalyzing(false); event.target.value = ''; }
   }
 
   const analyzeSelectedSection = useCallback(async () => {
     if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
     setLoading(true);
-    const worker = workerRef.current;
-    await new Promise<void>((resolve, reject) => {
-      worker.onmessage = (msg: MessageEvent) => {
-        if (msg.data.type === 'sectionDone') {
-          setSectionResult(msg.data.sectionResult);
-          resolve();
-        }
-      };
-      worker.onerror = () => reject(new Error('section analysis failed'));
-      worker.postMessage({ type: 'analyzeSection', payload: { ...audioDataRef.current, startSec: startSec ?? 0, endSec: endSec ?? 0 } });
-    }).finally(() => setLoading(false));
-  }, [hasSelection, startSec, endSec]);
+    setIsAnalyzing(true);
+    await runWorkerRequest({ type: 'analyzeSection', payload: { ...audioDataRef.current, startSec: startSec ?? 0, endSec: endSec ?? 0 } })
+      .then((msg) => {
+        if (msg.data.type === 'sectionDone') setSectionResult(msg.data.sectionResult);
+      })
+      .finally(() => { setLoading(false); setIsAnalyzing(false); });
+  }, [hasSelection, startSec, endSec, runWorkerRequest]);
 
   const sectionNarrative = sectionResult && result ? [
     `Problem area detected from ${formatClock(startSec)} to ${formatClock(endSec)}.`,
@@ -344,8 +365,8 @@ export default function App() {
   );
 
 
-  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p><p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
+  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
 
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
