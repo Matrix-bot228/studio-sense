@@ -178,6 +178,28 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
     }));
 }
 
+
+function buildSoundProfile(result: AnalysisResult | null): string {
+  if (!result) return '—';
+
+  const labels: string[] = [];
+  const lufs = result.lufs ?? result.lufsEstimate;
+
+  if ((result.clippingCount ?? 0) > 0) labels.push('Distorted');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) labels.push('Weak');
+  if (typeof lufs === 'number' && lufs < -20) labels.push('Quiet');
+  if ((result.channels ?? 0) === 1) labels.push('Mono / Flat');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) labels.push('Thin');
+  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) labels.push('Boomy');
+
+  if (!labels.length) return 'Clean & Balanced';
+
+  const uniqueLabels = [...new Set(labels)];
+  if (uniqueLabels.length === 1) return `${uniqueLabels[0]} Recording`;
+  if (uniqueLabels.length === 2) return `${uniqueLabels[0]} and ${uniqueLabels[1]} Recording`;
+  return `${uniqueLabels.slice(0, -1).join(', ')}, and ${uniqueLabels[uniqueLabels.length - 1]} Recording`;
+}
+
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
 function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
@@ -305,6 +327,7 @@ export default function App() {
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
+  const soundProfile = buildSoundProfile(result);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet': {
       title: 'Volume too low',
@@ -369,6 +392,9 @@ export default function App() {
     onTimeChange={setCurrentTime}
     onDurationChange={setDuration}
   />} 
+
+
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
 
   <section className="guidance"><h2>Section selection</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setStartSec(currentTime)} disabled={!audioBuffer}>Mark start</button><button className="upload-btn" type="button" onClick={() => setEndSec(currentTime)} disabled={!audioBuffer}>Mark end</button><button className="upload-btn" type="button" onClick={() => { setStartSec(null); setEndSec(null); setSectionResult(null); }} disabled={!audioBuffer}>Clear section</button></div>
     <div className="metrics-grid"><div className="metric"><span>Start</span><strong>{formatClock(startSec)}</strong></div><div className="metric"><span>End</span><strong>{formatClock(endSec)}</strong></div><div className="metric"><span>Length</span><strong>{hasSelection ? formatClock((endSec ?? 0) - (startSec ?? 0)) : '00:00'}</strong></div><div className="metric"><span>Manual (sec)</span><strong><input className="time-input" type="number" min={0} max={duration} value={startSec ?? 0} onChange={(e) => setStartSec(Number(e.target.value))} /> <input className="time-input" type="number" min={0} max={duration} value={endSec ?? 0} onChange={(e) => setEndSec(Number(e.target.value))} /></strong></div></div>
