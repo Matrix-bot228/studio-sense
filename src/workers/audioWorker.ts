@@ -138,20 +138,20 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
 }
 
 self.onmessage = (event: MessageEvent) => {
-  const { type, payload } = event.data;
+  const { type, payload, requestId } = event.data;
   if (type === 'analyze') {
     const { channels, sampleRate, durationSec } = payload;
-    self.postMessage({ type: 'stage', stage: 'Reading waveform' });
-    self.postMessage({ type: 'stage', stage: 'Measuring loudness' });
+    self.postMessage({ type: 'stage', stage: 'Reading waveform', requestId });
+    self.postMessage({ type: 'stage', stage: 'Measuring loudness', requestId });
     const result = analyzeRange(channels, sampleRate, 0, durationSec);
-    self.postMessage({ type: 'stage', stage: 'Finding problem areas' });
+    self.postMessage({ type: 'stage', stage: 'Finding problem areas', requestId });
     const markers = buildProblemMarkers(result);
-    self.postMessage({ type: 'stage', stage: 'Building diagnosis' });
-    self.postMessage({ type: 'done', result, markers, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES });
+    self.postMessage({ type: 'stage', stage: 'Building diagnosis', requestId });
+    self.postMessage({ type: 'done', result, markers, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES, requestId });
   }
   if (type === 'analyzeSection') {
     const { channels, sampleRate, startSec, endSec } = payload;
     const sectionResult = analyzeRange(channels, sampleRate, startSec, endSec);
-    self.postMessage({ type: 'sectionDone', sectionResult });
+    self.postMessage({ type: 'sectionDone', sectionResult, requestId });
   }
 };
