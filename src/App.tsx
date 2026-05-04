@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import AudioPlayer from './AudioPlayer';
 import ReleaseChecklist from './ReleaseChecklist';
 
@@ -64,119 +64,7 @@ function formatClock(seconds: number | null | undefined): string {
   const s = Math.floor(seconds % 60);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
-function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
-function hzToBin(hz: number, fftSize: number, sampleRate: number): number { return Math.floor((hz / sampleRate) * fftSize); }
-function getBalanceVerdict(low: number, mid: number, high: number): string {
-  if (low > 44) return 'Boomy low-end emphasis (rough estimate).';
-  if (low < 22) return 'Thin low-end weight (rough estimate).';
-  if (high > 28) return 'Bright / potentially sharp highs (rough estimate).';
-  if (high < 12) return 'Dull top-end (rough estimate).';
-  if (mid < 36) return 'Midrange feels recessed (rough estimate).';
-  return 'Spectral balance appears reasonably balanced (rough estimate).';
-}
-
-function analyzeRange(audioBuffer: AudioBuffer, startSec = 0, endSec = audioBuffer.duration): AnalysisResult {
-  const { sampleRate, numberOfChannels, length, duration } = audioBuffer;
-  const start = clamp(Math.floor(startSec * sampleRate), 0, Math.max(length - 1, 0));
-  const end = clamp(Math.floor(endSec * sampleRate), start + 1, length);
-  const sectionLen = Math.max(end - start, 1);
-  let peak = 0; let rmsAccumulator = 0; let sampleCount = 0; let clippingCount = 0;
-  const mono = new Float32Array(sectionLen);
-
-  for (let channel = 0; channel < numberOfChannels; channel += 1) {
-    const data = audioBuffer.getChannelData(channel);
-    for (let i = 0; i < sectionLen; i += 1) {
-      const sample = data[start + i] ?? 0;
-      const absSample = Math.abs(sample);
-      if (absSample > peak) peak = absSample;
-      if (absSample >= 0.999) clippingCount += 1;
-      rmsAccumulator += sample * sample;
-      mono[i] = (mono[i] ?? 0) + sample / numberOfChannels;
-    }
-    sampleCount += sectionLen;
-  }
-
-  const rms = Math.sqrt(rmsAccumulator / Math.max(sampleCount, 1));
-  const peakDb = peak > 0 ? 20 * Math.log10(peak) : -Infinity;
-  const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
-
-  const fftSize = Math.min(32768, 2 ** Math.floor(Math.log2(Math.max(1024, mono.length))));
-  const spectrumInput = mono.slice(0, fftSize);
-  const frequencyBins = new Float32Array(fftSize / 2);
-  for (let k = 0; k < fftSize / 2; k += 1) {
-    let re = 0; let im = 0;
-    for (let n = 0; n < fftSize; n += 1) {
-      const sample = spectrumInput[n] ?? 0;
-      const phase = (2 * Math.PI * k * n) / fftSize;
-      re += sample * Math.cos(phase); im -= sample * Math.sin(phase);
-    }
-    frequencyBins[k] = re * re + im * im;
-  }
-
-  const lowEnd = hzToBin(250, fftSize, sampleRate);
-  const midEnd = hzToBin(4000, fftSize, sampleRate);
-  let low = 0; let mid = 0; let high = 0;
-  for (let i = 0; i < frequencyBins.length; i += 1) {
-    const v = frequencyBins[i] ?? 0;
-    if (i <= lowEnd) low += v; else if (i <= midEnd) mid += v; else high += v;
-  }
-  const totalBand = Math.max(low + mid + high, Number.EPSILON);
-  const lowPercent = (low / totalBand) * 100;
-  const midPercent = (mid / totalBand) * 100;
-  const highPercent = (high / totalBand) * 100;
-
-  const lufsEstimate = rmsDb - 0.7;
-  const loudnessDelta = lufsEstimate - TARGET_LUFS;
-  let score = 100;
-  score -= clamp(Math.abs(peakDb - SAFE_PEAK_DBFS), 0, 20) * 1.3;
-  score -= clamp(Math.abs(loudnessDelta), 0, 12) * 2;
-  score -= clamp(clippingCount / 500, 0, 25);
-  score -= clamp(Math.abs(lowPercent - 30) / 2, 0, 15);
-  score -= clamp(Math.abs(highPercent - 18) / 2, 0, 15);
-  score = clamp(score, 0, 100);
-
-  let loudnessVerdict = `On target. LUFS estimate is within ±1 dB of ${TARGET_LUFS} LUFS.`;
-  if (loudnessDelta > 1) loudnessVerdict = `Too loud by about ${loudnessDelta.toFixed(1)} dB. Reduce gain/limiter output.`;
-  if (loudnessDelta < -1) loudnessVerdict = `Too quiet by about ${Math.abs(loudnessDelta).toFixed(1)} dB. Add gain/limiting.`;
-  const peakSafetyVerdict = peakDb < SAFE_PEAK_DBFS ? `Safe peak headroom (${formatDb(peakDb)} below -1 dBFS target).` : `Peak is above safe target by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB. Lower ceiling.`;
-  const clippingVerdict = clippingCount > 0 ? `Clipping risk detected (${clippingCount} clipped samples).` : 'No clipping detected in sample data.';
-  const balanceVerdict = getBalanceVerdict(lowPercent, midPercent, highPercent);
-  let readiness: ReadinessCategory = 'Release Ready';
-  if (clippingCount > 0 || peakDb >= -0.2 || Math.abs(loudnessDelta) > 4) readiness = 'Problem Area';
-  else if (Math.abs(loudnessDelta) > 1.5 || peakDb > SAFE_PEAK_DBFS || lowPercent > 44 || highPercent < 10) readiness = 'Needs Work';
-  let masteringSuggestion = 'Minor polish only. Keep headroom and compare against references.';
-  if (readiness === 'Needs Work') masteringSuggestion = 'Adjust gain staging and EQ balance, then re-check loudness and peaks.';
-  if (readiness === 'Problem Area') masteringSuggestion = 'Reduce limiting, fix clipping/ceiling, and rebalance tone before release.';
-
-  return { durationSec: endSec - startSec || duration, sampleRate, channels: numberOfChannels, peakDb, rmsDb, clippingCount, lowPercent, midPercent, highPercent, lufsEstimate, score, loudnessVerdict, peakSafetyVerdict, clippingVerdict, balanceVerdict, masteringSuggestion, readiness };
-}
-
-
-function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
-  const durationSec = result.durationSec ?? 0;
-  if (!(durationSec > 0)) return [];
-
-  const candidates = [
-    { active: ((result.lufs ?? result.lufsEstimate) ?? 0) < -18, label: 'Too quiet → add gain', color: 'red' as const },
-    { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal → normalize', color: 'yellow' as const },
-    { active: (result.channels ?? 0) === 1, label: 'Low quality → reduce noise + add width', color: 'red' as const },
-    { active: (result.lowPercent ?? 100) < 20, label: 'Thin sound → boost bass', color: 'yellow' as const }
-  ];
-  const slots = [0.1, 0.3, 0.5, 0.7];
-
-  return candidates
-    .filter((c) => c.active)
-    .map((candidate, index) => ({
-      id: `auto-${index}-${candidate.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-      timeSec: durationSec * slots[index],
-      label: candidate.label,
-      severity: 'high' as const,
-      explanation: 'Auto-generated from whole-track analysis.',
-      color: candidate.color,
-      estimated: true,
-      kind: 'estimated' as const
-    }));
-}
+type WorkerAudioData = { channels: Float32Array[]; sampleRate: number; durationSec: number };
 
 
 function buildSoundProfile(result: AnalysisResult | null): string {
@@ -312,10 +200,19 @@ export default function App() {
   const [status, setStatus] = useState('Upload audio to start analysis.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
+  const [analysisStage, setAnalysisStage] = useState('Idle');
+  const [largeFileWarning, setLargeFileWarning] = useState('');
   const [fileName, setFileName] = useState('No file selected');
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const audioDataRef = useRef<WorkerAudioData | null>(null);
+  const analyzedFileRef = useRef<string | null>(null);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+  useEffect(() => {
+    workerRef.current = new Worker(new URL('./audioAnalysisWorker.ts', import.meta.url), { type: 'module' });
+    return () => workerRef.current?.terminate();
+  }, []);
 
   const hasSelection = startSec !== null && endSec !== null && endSec > startSec;
   const verdictItems = useMemo(() => [
@@ -328,11 +225,11 @@ export default function App() {
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
-    setLoading(true); setFileName(file.name); setStatus('Audio ready for playback'); setAnalysisStatus('processing');
+    setLoading(true); setFileName(file.name); setStatus('Analyzing audio… please wait'); setAnalysisStatus('processing'); setAnalysisStage('Loading audio'); setLargeFileWarning('');
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
-    setAudioBuffer(null);
+    setAudioBuffer(null); audioDataRef.current = null; analyzedFileRef.current = null;
     setCurrentTime(0);
     setDuration(0);
     try {
@@ -341,18 +238,50 @@ export default function App() {
       const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
       await audioContext.close();
       setAudioBuffer(decoded);
-      const analysis = analyzeRange(decoded, 0, decoded.duration);
-      setResult(analysis);
-      const markers = buildProblemMarkers(analysis);
-      setAutoMarkers(markers);
+      const channels = Array.from({ length: decoded.numberOfChannels }, (_, i) => new Float32Array(decoded.getChannelData(i)));
+      const workerData = { channels, sampleRate: decoded.sampleRate, durationSec: decoded.duration };
+      audioDataRef.current = workerData;
+      const worker = workerRef.current;
+      if (!worker) throw new Error('Worker unavailable');
+      setAnalysisStage('Reading waveform');
+      await new Promise<void>((resolve, reject) => {
+        worker.onmessage = (msg: MessageEvent) => {
+          if (msg.data.type === 'stage') setAnalysisStage(msg.data.stage);
+          if (msg.data.type === 'done') {
+            setResult(msg.data.result);
+            setAutoMarkers(msg.data.markers);
+            if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
+            analyzedFileRef.current = `${file.name}-${file.size}-${file.lastModified}`;
+            resolve();
+          }
+        };
+        worker.onerror = () => reject(new Error('worker failed'));
+        worker.postMessage({ type: 'analyze', payload: workerData });
+      });
       setDuration(decoded.duration); setCurrentTime(0);
       setStatus('Analysis complete');
       setAnalysisStatus('complete');
     } catch {
-      setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback');
+      setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null;
       setAnalysisStatus('failed');
     } finally { setLoading(false); event.target.value = ''; }
   }
+
+  const analyzeSelectedSection = useCallback(async () => {
+    if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
+    setLoading(true);
+    const worker = workerRef.current;
+    await new Promise<void>((resolve, reject) => {
+      worker.onmessage = (msg: MessageEvent) => {
+        if (msg.data.type === 'sectionDone') {
+          setSectionResult(msg.data.sectionResult);
+          resolve();
+        }
+      };
+      worker.onerror = () => reject(new Error('section analysis failed'));
+      worker.postMessage({ type: 'analyzeSection', payload: { ...audioDataRef.current, startSec: startSec ?? 0, endSec: endSec ?? 0 } });
+    }).finally(() => setLoading(false));
+  }, [hasSelection, startSec, endSec]);
 
   const sectionNarrative = sectionResult && result ? [
     `Problem area detected from ${formatClock(startSec)} to ${formatClock(endSec)}.`,
@@ -417,8 +346,8 @@ export default function App() {
   );
 
 
-  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} /></header>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p><p className="status">{analysisStatus === 'processing' ? 'Analysis processing...' : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>
+  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{loading ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
+  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p><p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
 
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
@@ -443,7 +372,7 @@ export default function App() {
 
   <section className="guidance"><h2>Section selection</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setStartSec(currentTime)} disabled={!audioBuffer}>Mark start</button><button className="upload-btn" type="button" onClick={() => setEndSec(currentTime)} disabled={!audioBuffer}>Mark end</button><button className="upload-btn" type="button" onClick={() => { setStartSec(null); setEndSec(null); setSectionResult(null); }} disabled={!audioBuffer}>Clear section</button></div>
     <div className="metrics-grid"><div className="metric"><span>Start</span><strong>{formatClock(startSec)}</strong></div><div className="metric"><span>End</span><strong>{formatClock(endSec)}</strong></div><div className="metric"><span>Length</span><strong>{hasSelection ? formatClock((endSec ?? 0) - (startSec ?? 0)) : '00:00'}</strong></div><div className="metric"><span>Manual (sec)</span><strong><input className="time-input" type="number" min={0} max={duration} value={startSec ?? 0} onChange={(e) => setStartSec(Number(e.target.value))} /> <input className="time-input" type="number" min={0} max={duration} value={endSec ?? 0} onChange={(e) => setEndSec(Number(e.target.value))} /></strong></div></div>
-    <div className="workflow-row"><button className="upload-btn" type="button" disabled={!audioBuffer || !hasSelection} onClick={() => { if (!audioBuffer || !hasSelection) return; setSectionResult(analyzeRange(audioBuffer, startSec ?? 0, endSec ?? 0)); }}>Analyze selected section</button></div>
+    <div className="workflow-row"><button className="upload-btn" type="button" disabled={loading || !audioBuffer || !hasSelection} onClick={analyzeSelectedSection}>Analyze selected section</button></div>
   </section>
 
   <section className="metrics-grid">
