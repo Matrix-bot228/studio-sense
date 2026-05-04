@@ -127,6 +127,28 @@ function detectAudioType(result: AnalysisResult | null): string {
 }
 
 
+
+function buildSafeModeFixPlan(result: AnalysisResult | null): string[] {
+  if (!result) return [];
+
+  const suggestions: string[] = [];
+  const lufs = result.lufsEstimate;
+  const peak = result.peakDb;
+  const low = result.lowPercent;
+  const channels = result.channels;
+
+  if (typeof lufs === 'number' && lufs < -16) {
+    const boostAmount = Math.max(0, Math.ceil(-16 - lufs));
+    suggestions.push(`Increase loudness with limiter (+${boostAmount} dB)`);
+  }
+
+  if (typeof peak === 'number' && peak > -1) suggestions.push('Reduce peak to -1 dB');
+  if (typeof low === 'number' && low < 20) suggestions.push('Boost low-end EQ');
+  if (channels === 1) suggestions.push('Convert to stereo widening');
+
+  return suggestions;
+}
+
 function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; avoid: string[]; readiness: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
@@ -281,6 +303,7 @@ export default function App() {
   const [endSec, setEndSec] = useState<number | null>(null);
   const [sectionResult, setSectionResult] = useState<AnalysisResult | null>(null);
   const [problemNote, setProblemNote] = useState('');
+  const [safeModeFixPlan, setSafeModeFixPlan] = useState<string[]>([]);
   const [manualProblemAreas, setManualProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
@@ -395,6 +418,9 @@ export default function App() {
   const hasAnalyzedTrack = Boolean(result);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
   const autoFixPlan = result ? buildAutoFixPlan(result) : null;
+  const runSafeModeAutoFix = useCallback(() => {
+    setSafeModeFixPlan(buildSafeModeFixPlan(result));
+  }, [result]);
   const soundProfile = buildSoundProfile(result);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
@@ -495,5 +521,7 @@ export default function App() {
   <section className="guidance"><details><summary>Show technical details</summary>{result ? <div className="technical-details"><p>LUFS estimate: {formatDb(result.lufsEstimate)}</p><p>RMS dB: {formatDb(result.rmsDb)}</p><p>Channels: {formatNumber(result.channels, 0)}</p><p>Low / Mid / High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</p><p>Markers debug: {combinedProblemMarkers.map((m) => `${m.label}@${formatClock(m.timeSec)} (${m.kind})`).join(', ') || 'none'}</p></div> : <p className="empty">No analysis yet.</p>}</details></section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
+
+  <section className="guidance"><h2>Auto Fix (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Run Auto Fix</button></div><h3>Recommended Fix Plan</h3>{safeModeFixPlan.length ? <ul>{safeModeFixPlan.map((item) => <li key={`safe-fix-${item}`}>{item}</li>)}</ul> : <p className="empty">Run Auto Fix to generate safe, non-destructive guidance.</p>}</section>
 </section></main>;
 }
