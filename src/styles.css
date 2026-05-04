@@ -288,3 +288,42 @@ button.upload-btn:disabled,
   font-size: 0.78rem;
   color: #d7def6;
 }
+
+
+.guidance h3 {
+  margin: 10px 0 6px;
+  font-size: 0.83rem;
+  color: #d9e3ff;
+}
+
+.guidance ul,
+.guidance ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+  font-size: 0.8rem;
+}
+
+.timeline-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.problem-timeline .jump-btn {
+  margin-left: 0;
+  width: fit-content;
+}
+
+.guidance details summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.technical-details p {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  opacity: 0.9;
+}

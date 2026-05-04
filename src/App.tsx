@@ -180,6 +180,66 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 
+function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
+  const hearing: string[] = [];
+  const why: string[] = [];
+  const next: string[] = [];
+
+  const lufs = result.lufs ?? result.lufsEstimate;
+  const rms = result.rmsDb;
+  const channels = result.channels ?? 0;
+  const low = result.lowPercent;
+  const peak = result.peakDb;
+  const clippingCount = result.clippingCount ?? 0;
+  const isMono = channels === 1;
+
+  if (typeof lufs === 'number' && lufs < -16) {
+    hearing.push('The track sounds quiet compared with most modern releases.');
+    why.push('Overall loudness is lower than common streaming targets.');
+    next.push('Increase loudness using gain staging and a limiter, then compare against a reference track.');
+  }
+  if (typeof rms === 'number' && rms < -20) {
+    hearing.push('It feels soft and low-energy in parts.');
+    why.push('Signal strength is weak, so the mix loses punch and presence.');
+    next.push('Use gentle compression, gain, or a cleaner source recording to improve energy.');
+  }
+  if (isMono) {
+    hearing.push('It sounds narrow, like most elements are in the center.');
+    why.push('The file appears to be mono or has very limited stereo width.');
+    next.push('Check the export settings for stereo and add subtle width only if it fits the song.');
+  }
+  if (typeof low === 'number' && low < 22) {
+    hearing.push('The low-end feels thin and lacks warmth.');
+    why.push('Low frequencies are under-represented compared with mids and highs.');
+    next.push('Add low-end EQ around 80–200 Hz and re-check on speakers and headphones.');
+  }
+  if (typeof low === 'number' && low > 44) {
+    hearing.push('The bass feels heavy and can get boomy.');
+    why.push('Too much spectral energy is concentrated in the low frequencies.');
+    next.push('Reduce muddy low frequencies with subtractive EQ and tighten the low-end dynamics.');
+  }
+  if (typeof peak === 'number' && peak > -1) {
+    hearing.push('The loudest moments are very close to distortion.');
+    why.push('Peak level is above the safer mastering headroom target.');
+    next.push('Lower limiter ceiling/output to keep peaks below -1 dBFS.');
+  }
+  if (clippingCount > 0) {
+    hearing.push('There may be audible crackle or harsh distortion on peaks.');
+    why.push('Clipping was detected in the waveform.');
+    next.push('Back off limiting or gain, then export again and verify clipping is gone.');
+  }
+
+  const healthy = hearing.length === 0;
+  if (healthy) {
+    hearing.push('The track already sounds balanced and competitive for release.');
+    why.push('Loudness, peak headroom, stereo format, and tonal balance are within healthy ranges.');
+    next.push('Do a final reference check, then export your release master.');
+  }
+
+  return { hearing, why, next, healthy };
+}
+
+
 export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
@@ -244,29 +304,30 @@ export default function App() {
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
+  const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet': {
       title: 'Volume too low',
-      explanation: 'This part is much quieter than the rest of the track.',
-      fix: 'Increase gain or volume.',
+      explanation: 'This part may sound too quiet compared with other songs.',
+      fix: 'Increase volume gently or use a limiter.',
       badgeTone: 'bad'
     },
     'Weak signal': {
       title: 'Weak recording quality',
-      explanation: 'The sound lacks strength and clarity.',
-      fix: 'Boost mid frequencies or improve source audio.',
+      explanation: 'This section lacks strength and presence.',
+      fix: 'Try gain, compression, or a cleaner source.',
       badgeTone: 'warn'
     },
     'Mono / low fidelity': {
       title: 'Flat / mono sound',
-      explanation: 'Audio has no stereo width and feels narrow.',
-      fix: 'Add stereo widening.',
+      explanation: 'The sound feels narrow and has little stereo space.',
+      fix: 'Add subtle stereo width or re-record/export in stereo.',
       badgeTone: 'warn'
     },
     'Thin low-end': {
       title: 'Lacks bass / thin sound',
-      explanation: 'Audio feels empty and lacks warmth.',
-      fix: 'Boost low frequencies (80–200 Hz).',
+      explanation: 'Bass and warmth are weak here.',
+      fix: 'Add low-end EQ around 80–200 Hz.',
       badgeTone: 'warn'
     },
     'Custom problem area': {
@@ -324,7 +385,11 @@ export default function App() {
 
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
-  <section className="verdicts problem-timeline"><h2>Problem Timeline</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><p className="timeline-summary">🧠 We found {combinedProblemMarkers.length} problem {combinedProblemMarkers.length === 1 ? 'area' : 'areas'} in your track</p><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div><span className={`pill ${guidance.badgeTone}`}>{guidance.title} ({formatClock(m.timeSec)})</span></div><span>{guidance.explanation}</span><span><strong>Fix:</strong> {m.label === 'Custom problem area' && m.explanation ? `${m.explanation} ` : ''}{guidance.fix} <button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></span></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected.<br />Your track issues are global (affect the whole track).</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
+  <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
+
+  <section className="verdicts problem-timeline"><h2>Problem Timeline</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{guidance.explanation}</span><span><strong>Fix:</strong> {m.label === 'Custom problem area' && m.explanation ? `${m.explanation} ` : ''}{guidance.fix}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
+
+  <section className="guidance"><details><summary>Show technical details</summary>{result ? <div className="technical-details"><p>LUFS estimate: {formatDb(result.lufsEstimate)}</p><p>RMS dB: {formatDb(result.rmsDb)}</p><p>Channels: {formatNumber(result.channels, 0)}</p><p>Low / Mid / High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</p><p>Markers debug: {combinedProblemMarkers.map((m) => `${m.label}@${formatClock(m.timeSec)} (${m.kind})`).join(', ') || 'none'}</p></div> : <p className="empty">No analysis yet.</p>}</details></section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 </section></main>;
