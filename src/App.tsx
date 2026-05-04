@@ -206,11 +206,10 @@ export default function App() {
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
-  const analyzedFileRef = useRef<string | null>(null);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
   useEffect(() => {
-    workerRef.current = new Worker(new URL('./audioAnalysisWorker.ts', import.meta.url), { type: 'module' });
+    workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
     return () => workerRef.current?.terminate();
   }, []);
 
@@ -229,7 +228,7 @@ export default function App() {
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
-    setAudioBuffer(null); audioDataRef.current = null; analyzedFileRef.current = null;
+    setAudioBuffer(null); audioDataRef.current = null;
     setCurrentTime(0);
     setDuration(0);
     try {
@@ -251,7 +250,6 @@ export default function App() {
             setResult(msg.data.result);
             setAutoMarkers(msg.data.markers);
             if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
-            analyzedFileRef.current = `${file.name}-${file.size}-${file.lastModified}`;
             resolve();
           }
         };
