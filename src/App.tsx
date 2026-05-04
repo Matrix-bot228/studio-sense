@@ -131,22 +131,66 @@ function detectAudioType(result: AnalysisResult | null): string {
 function buildSafeModeFixPlan(result: AnalysisResult | null): string[] {
   if (!result) return [];
 
-  const suggestions: string[] = [];
-  const lufs = result.lufsEstimate;
+  const lines: string[] = [];
+  const lufs = result.lufsEstimate ?? result.lufs;
   const peak = result.peakDb;
+  const rms = result.rmsDb;
+  const channels = result.channels ?? 0;
   const low = result.lowPercent;
-  const channels = result.channels;
+  const mid = result.midPercent;
+  const high = result.highPercent;
+  const clippingCount = result.clippingCount ?? 0;
 
-  if (typeof lufs === 'number' && lufs < -16) {
-    const boostAmount = Math.max(0, Math.ceil(-16 - lufs));
-    suggestions.push(`Increase loudness with limiter (+${boostAmount} dB)`);
+  if (typeof lufs === 'number') {
+    if (lufs < -16) {
+      const gainDb = Math.max(1, Math.round(-14 - lufs));
+      lines.push(`Loudness: This track is too quiet and may sound weak next to commercial songs. Try increasing gain by about ${gainDb} dB, but keep the final peak below -1 dBFS.`);
+    } else if (lufs > -10) {
+      lines.push('Loudness: This track is already very loud. Avoid pushing level further to reduce distortion risk.');
+    } else {
+      lines.push('Loudness: Loudness is in a usable range for streaming-style delivery.');
+    }
   }
 
-  if (typeof peak === 'number' && peak > -1) suggestions.push('Reduce peak to -1 dB');
-  if (typeof low === 'number' && low < 20) suggestions.push('Boost low-end EQ');
-  if (channels === 1) suggestions.push('Convert to stereo widening');
+  if (typeof peak === 'number') {
+    lines.push(`Peak safety: The peak is ${peak <= -1 ? 'safe' : 'not safe'} (${peak.toFixed(1)} dBFS).`);
+  }
 
-  return suggestions;
+  if (typeof low === 'number' && typeof mid === 'number' && typeof high === 'number') {
+    if (low < 22) {
+      lines.push('Tone balance: The low-end is thin, so the song may feel small or lacking warmth. Try gentle bass EQ before limiting.');
+    } else if (low > 44) {
+      lines.push('Tone balance: The low-end is heavy and may mask clarity. Cut muddy bass gently before adding loudness.');
+    } else if (high < 18) {
+      lines.push('Tone balance: The high-end is muted. Add a very gentle high-shelf and stop once clarity improves.');
+    } else if (mid > 65) {
+      lines.push('Tone balance: Midrange is dominant and may sound boxy. Use subtle subtractive EQ in the low-mid range.');
+    } else {
+      lines.push('Tone balance: Low, mid, and high energy look reasonably balanced.');
+    }
+  }
+
+  if (channels === 1 || (typeof rms === 'number' && rms < -21)) {
+    lines.push('Mono/quality: This looks like mono or low-fidelity audio. Do not over-compress it.');
+  } else {
+    lines.push('Mono/quality: Stereo and average level look healthy enough for gentle mastering moves.');
+  }
+
+  if (clippingCount > 0) {
+    lines.push('First step: Reduce clipping first, then rebalance EQ, then adjust loudness.');
+  } else {
+    lines.push('First step: Clean noise, then rebalance EQ, then adjust loudness.');
+  }
+
+  const readiness = result.readiness ?? 'Needs Work';
+  lines.push(`Release readiness: ${readiness}.`);
+  if (typeof result.score === 'number') lines.push(`Readiness score: ${Math.round(result.score)} / 100.`);
+  if (result.loudnessVerdict) lines.push(`Loudness verdict: ${result.loudnessVerdict}`);
+  if (result.balanceVerdict) lines.push(`Balance verdict: ${result.balanceVerdict}`);
+  if (result.clippingVerdict) lines.push(`Clipping verdict: ${result.clippingVerdict}`);
+  if (result.masteringSuggestion) lines.push(`Mastering suggestion: ${result.masteringSuggestion}`);
+
+  return lines;
 }
 
 function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; avoid: string[]; readiness: string[] } {
@@ -518,10 +562,8 @@ export default function App() {
 
   <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
-  <section className="guidance"><details><summary>Show technical details</summary>{result ? <div className="technical-details"><p>LUFS estimate: {formatDb(result.lufsEstimate)}</p><p>RMS dB: {formatDb(result.rmsDb)}</p><p>Channels: {formatNumber(result.channels, 0)}</p><p>Low / Mid / High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</p><p>Markers debug: {combinedProblemMarkers.map((m) => `${m.label}@${formatClock(m.timeSec)} (${m.kind})`).join(', ') || 'none'}</p></div> : <p className="empty">No analysis yet.</p>}</details></section>
-
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 
-  <section className="guidance"><h2>Auto Fix (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Run Auto Fix</button></div><h3>Recommended Fix Plan</h3>{safeModeFixPlan.length ? <ul>{safeModeFixPlan.map((item) => <li key={`safe-fix-${item}`}>{item}</li>)}</ul> : <p className="empty">Run Auto Fix to generate safe, non-destructive guidance.</p>}</section>
+  <section className="guidance"><h2>Auto Fix Plan (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Generate Fix Plan</button></div>{safeModeFixPlan.length ? <ul>{safeModeFixPlan.map((item) => <li key={`safe-fix-${item}`}>{item}</li>)}</ul> : <p className="empty">Run analysis, then generate a safe beginner-friendly fix plan.</p>}</section>
 </section></main>;
 }
