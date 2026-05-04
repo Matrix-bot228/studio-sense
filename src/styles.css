@@ -222,6 +222,21 @@ button.upload-btn:disabled,
   cursor: not-allowed;
 }
 
+
+.problem-timeline .timeline-summary {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+}
+
+.problem-timeline .timeline-item {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid #33437d;
+  border-radius: 10px;
+  background: rgba(8, 13, 28, 0.7);
+}
 .release-checklist {
   margin-top: 12px;
   border: 1px solid #3f4f8f;
