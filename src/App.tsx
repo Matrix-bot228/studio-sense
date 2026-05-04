@@ -191,13 +191,55 @@ function buildSoundProfile(result: AnalysisResult | null): string {
   if ((result.channels ?? 0) === 1) labels.push('Mono / Flat');
   if (typeof result.lowPercent === 'number' && result.lowPercent < 15) labels.push('Thin');
   if (typeof result.lowPercent === 'number' && result.lowPercent > 60) labels.push('Boomy');
+  if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) labels.push('Low fidelity');
 
-  if (!labels.length) return 'Clean & Balanced';
+  if (!labels.length) return 'Clean and balanced mix';
 
   const uniqueLabels = [...new Set(labels)];
-  if (uniqueLabels.length === 1) return `${uniqueLabels[0]} Recording`;
-  if (uniqueLabels.length === 2) return `${uniqueLabels[0]} and ${uniqueLabels[1]} Recording`;
-  return `${uniqueLabels.slice(0, -1).join(', ')}, and ${uniqueLabels[uniqueLabels.length - 1]} Recording`;
+  if (uniqueLabels.length === 1) return `${uniqueLabels[0]} recording`;
+  if (uniqueLabels.length === 2) return `${uniqueLabels[0]} and ${uniqueLabels[1]} recording`;
+  return `${uniqueLabels.slice(0, -1).join(', ')}, and ${uniqueLabels[uniqueLabels.length - 1]} recording`;
+}
+
+function buildWhyItSoundsThisWay(result: AnalysisResult | null): string {
+  if (!result) return 'Run analysis to explain the current sound character.';
+  const reasons: string[] = [];
+  const lufs = result.lufs ?? result.lufsEstimate;
+  if (typeof lufs === 'number' && lufs < -20) reasons.push('very low loudness');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) reasons.push('weak signal strength');
+  if ((result.channels ?? 0) === 1) reasons.push('mono format reduces spatial depth');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) reasons.push('not enough bass energy');
+  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) reasons.push('too much low-frequency energy');
+  if ((result.clippingCount ?? 0) > 0) reasons.push('clipping artifacts on peaks');
+  if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) reasons.push('limited fidelity from a low sample rate');
+
+  if (!reasons.length) return 'Loudness, tonal balance, and stereo depth are all in healthy ranges, so the mix feels modern and clear.';
+  return `It sounds this way because of ${reasons.join(', ')}, which shapes the mix character and perceived quality.`;
+}
+
+function buildFixSuggestions(result: AnalysisResult | null): string[] {
+  if (!result) return [];
+  const fixes: string[] = [];
+  const lufs = result.lufs ?? result.lufsEstimate;
+  if (typeof lufs === 'number' && lufs < -20) fixes.push('Quiet → Increase gain or apply limiter (+6 to +10 dB)');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) fixes.push('Weak signal → Normalize audio or re-record at higher input level');
+  if ((result.channels ?? 0) === 1) fixes.push('Mono / Flat → Convert to stereo or add stereo widening');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Thin → Boost low frequencies (80–150 Hz)');
+  if (typeof result.lowPercent === 'number' && result.lowPercent > 60) fixes.push('Boomy → Reduce low frequencies (cut 80–200 Hz)');
+  if ((result.clippingCount ?? 0) > 0) fixes.push('Clipping → Lower limiter ceiling (-1 dB) and reduce gain');
+  if (typeof result.sampleRate === 'number' && result.sampleRate < 44100) fixes.push('Low fidelity → Use noise reduction and EQ cleanup');
+  return fixes;
+}
+
+function detectAudioType(result: AnalysisResult | null): string {
+  if (!result) return '—';
+  const lufs = result.lufs ?? result.lufsEstimate;
+  const weak = (typeof lufs === 'number' && lufs < -20) || ((result.rmsDb ?? 0) < -20);
+  const mono = (result.channels ?? 0) === 1;
+  const balanced = (result.lowPercent ?? 0) >= 20 && (result.lowPercent ?? 0) <= 45 && (result.clippingCount ?? 0) === 0;
+  if (mono && weak && (result.rmsDb ?? 0) < -20) return 'Likely old recording / tape / phone capture';
+  if (!mono && balanced && (lufs ?? -99) > -18) return 'Modern digital recording';
+  return 'Mixed characteristics (part modern, part archival)';
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
@@ -328,29 +370,32 @@ export default function App() {
   const hasAnalyzedTrack = Boolean(result);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
   const soundProfile = buildSoundProfile(result);
+  const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
+  const fixSuggestions = buildFixSuggestions(result);
+  const audioType = detectAudioType(result);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet': {
       title: 'Volume too low',
       explanation: 'This part may sound too quiet compared with other songs.',
-      fix: 'Increase volume gently or use a limiter.',
+      fix: 'Increase gain +6 dB',
       badgeTone: 'bad'
     },
     'Weak signal': {
       title: 'Weak recording quality',
       explanation: 'This section lacks strength and presence.',
-      fix: 'Try gain, compression, or a cleaner source.',
+      fix: 'Normalize or re-record louder',
       badgeTone: 'warn'
     },
     'Mono / low fidelity': {
       title: 'Flat / mono sound',
       explanation: 'The sound feels narrow and has little stereo space.',
-      fix: 'Add subtle stereo width or re-record/export in stereo.',
+      fix: 'Convert to stereo or add stereo widening.',
       badgeTone: 'warn'
     },
     'Thin low-end': {
       title: 'Lacks bass / thin sound',
       explanation: 'Bass and warmth are weak here.',
-      fix: 'Add low-end EQ around 80–200 Hz.',
+      fix: 'Boost low frequencies around 80–150 Hz.',
       badgeTone: 'warn'
     },
     'Custom problem area': {
@@ -394,7 +439,9 @@ export default function App() {
   />} 
 
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p><p><strong>Audio type:</strong> {audioType}</p></section>
+  <section className="guidance"><h2>🧠 Why it sounds like this</h2><p>{whyItSoundsThisWay}</p></section>
+  <section className="guidance"><h2>🛠 Fix Suggestions (Simple Mode)</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
   <section className="guidance"><h2>Section selection</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setStartSec(currentTime)} disabled={!audioBuffer}>Mark start</button><button className="upload-btn" type="button" onClick={() => setEndSec(currentTime)} disabled={!audioBuffer}>Mark end</button><button className="upload-btn" type="button" onClick={() => { setStartSec(null); setEndSec(null); setSectionResult(null); }} disabled={!audioBuffer}>Clear section</button></div>
     <div className="metrics-grid"><div className="metric"><span>Start</span><strong>{formatClock(startSec)}</strong></div><div className="metric"><span>End</span><strong>{formatClock(endSec)}</strong></div><div className="metric"><span>Length</span><strong>{hasSelection ? formatClock((endSec ?? 0) - (startSec ?? 0)) : '00:00'}</strong></div><div className="metric"><span>Manual (sec)</span><strong><input className="time-input" type="number" min={0} max={duration} value={startSec ?? 0} onChange={(e) => setStartSec(Number(e.target.value))} /> <input className="time-input" type="number" min={0} max={duration} value={endSec ?? 0} onChange={(e) => setEndSec(Number(e.target.value))} /></strong></div></div>
@@ -413,7 +460,7 @@ export default function App() {
 
   <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
-  <section className="verdicts problem-timeline"><h2>Problem Timeline</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{guidance.explanation}</span><span><strong>Fix:</strong> {m.label === 'Custom problem area' && m.explanation ? `${m.explanation} ` : ''}{guidance.fix}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
+  <section className="verdicts problem-timeline"><h2>Markers (enhanced)</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{`${m.label} → ${guidance.fix}`}</span><span>{guidance.explanation}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
 
   <section className="guidance"><details><summary>Show technical details</summary>{result ? <div className="technical-details"><p>LUFS estimate: {formatDb(result.lufsEstimate)}</p><p>RMS dB: {formatDb(result.rmsDb)}</p><p>Channels: {formatNumber(result.channels, 0)}</p><p>Low / Mid / High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</p><p>Markers debug: {combinedProblemMarkers.map((m) => `${m.label}@${formatClock(m.timeSec)} (${m.kind})`).join(', ') || 'none'}</p></div> : <p className="empty">No analysis yet.</p>}</details></section>
 
