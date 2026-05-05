@@ -178,9 +178,9 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
     quickSummary.push('Peaks are too hot');
     whatIHear.push('The loudest peaks are too hot and may distort.');
     whatMatters.push('Distortion may appear after export or streaming encoding.');
-    whatToDoFirst.unshift(`Step 1: Lower limiter/output ceiling to -1 dBFS first (current peak ${peak.toFixed(1)} dBFS).`);
+    whatToDoFirst.unshift(`Step 1: Set your limiter/output ceiling to -1 dB so the loudest parts stay safe. (current peak ${peak.toFixed(1)} dBFS).`);
     issueSeverity.push({ label: 'Peak safety risk', severity: 'critical' });
-    startWithSteps.unshift('lower ceiling');
+    startWithSteps.unshift('set limiter/output ceiling');
   }
 
   if (clippingCount > 0) {
@@ -196,7 +196,7 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
       whatIHear.push('The sound feels thin with limited low-end warmth.');
       whatMatters.push('Lack of bass reduces warmth and depth on full-range systems.');
       issueSeverity.push({ label: 'Thin low-end balance', severity: 'important' });
-      whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: After gain staging, add a gentle EQ boost around 80–150 Hz and re-check balance.`);
+      whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: After gain staging, add a little bass warmth around 80–150 Hz. Keep it gentle so the track does not get muddy.`);
       startWithSteps.push('balance EQ');
     } else if (low > 44) {
       whatIHear.push('The low-end is heavy and can blur the mix.');
@@ -275,7 +275,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (typeof low === 'number' && low < 22) {
     wrong.push('The low-end is thin.');
     matters.push('The track may feel small or lacking warmth.');
-    first.push('Try a small low-end EQ boost around 80–150 Hz, then level-match and listen again.');
+    first.push('Add a little bass warmth around 80–150 Hz. Keep it gentle so the track does not get muddy.');
   }
   if (typeof low === 'number' && low > 44) {
     wrong.push('There is too much low-end buildup.');
@@ -285,7 +285,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (typeof high === 'number' && high < 18) {
     wrong.push('The high-end is a bit muted.');
     matters.push('Muted highs can reduce clarity and sparkle.');
-    first.push('Use a gentle high-shelf boost and stop as soon as clarity improves.');
+    first.push('Add a small amount of brightness if the track sounds dull, then stop as soon as it feels clearer.');
   }
   if (channels === 1) {
     wrong.push('This file is mono.');
@@ -342,7 +342,7 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   if (typeof lufs === 'number' && lufs < -16) {
     hearing.push('The track sounds quiet compared with most modern releases.');
     why.push('Overall loudness is lower than common streaming targets.');
-    next.push('Increase loudness using gain staging and a limiter, then compare against a reference track.');
+    next.push('Raise the volume slowly, then check that the peak still stays below -1 dB.');
   }
   if (typeof rms === 'number' && rms < -20) {
     hearing.push('It feels soft and low-energy in parts.');
@@ -367,7 +367,7 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   if (typeof peak === 'number' && peak > -1) {
     hearing.push('The loudest moments are very close to distortion.');
     why.push('Peak level is above the safer mastering headroom target.');
-    next.push('Lower limiter ceiling/output to keep peaks below -1 dBFS.');
+    next.push('Set your limiter/output ceiling to -1 dB so the loudest parts stay safe.');
   }
   if (clippingCount > 0) {
     hearing.push('There may be audible crackle or harsh distortion on peaks.');
@@ -576,7 +576,7 @@ export default function App() {
   );
 
 
-  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p></div><label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
+  return <main className="app-shell"><section className="card compact"><header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p><p className="subhead">Your beginner listening coach for understanding and improving music quality.</p></div><label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
 
   {audioUrl && <AudioPlayer
@@ -618,10 +618,10 @@ export default function App() {
 
   <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
-  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>Coach note</h3><p>Coach note: Fix the loudest peaks first, then adjust loudness, then shape the tone. Small changes are safer than big changes.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Start by fixing the loudest peaks first. Then bring the overall volume up slowly. Finally, adjust tone only if the track still feels muddy, thin, harsh, or dull.</p><p>Small changes are safer than big changes. Listen after every step.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 
-  <section className="guidance"><h2>Listening Coach (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>🎧 Get Listening Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST (PRIORITY ORDER)</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “🎧 Get Listening Coach Plan” for a structured listening coach plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach Plan (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Get Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST (PRIORITY ORDER)</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “Get Coach Plan” for a structured listening coach plan.</p>}</section>
 </section></main>;
 }
