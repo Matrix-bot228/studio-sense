@@ -124,13 +124,13 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   score -= clamp(Math.abs(highPercent - 18) / 2, 0, 15);
   score = clamp(score, 0, 100);
   let loudnessVerdict = `On target. LUFS estimate is within ±1 dB of ${TARGET_LUFS} LUFS.`;
-  if (loudnessDelta > 1) loudnessVerdict = `Too loud by about ${loudnessDelta.toFixed(1)} dB. Reduce gain/limiter output.`;
+  if (loudnessDelta > 1) loudnessVerdict = `Too loud by about ${loudnessDelta.toFixed(1)} dB. Lower the master level a little, then listen again to keep it clean.`;
   if (loudnessDelta < -1) loudnessVerdict = `Too quiet by about ${Math.abs(loudnessDelta).toFixed(1)} dB. Raise the volume slowly, then check that the peak still stays below -1 dB.`;
-  const peakSafetyVerdict = peakDb < SAFE_PEAK_DBFS ? 'Safe peak headroom.' : `Peak is above safe target by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB. Set your limiter/output ceiling to -1 dB so the loudest parts stay safe.`;
+  const peakSafetyVerdict = peakDb < SAFE_PEAK_DBFS ? 'Safe peak headroom.' : `Peak is above safe target by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB. Set your limiter/output so the loudest parts stay below -1 dB.`;
   const clippingVerdict = clippingCount > 0
     ? `Clipping risk detected (${clippingCount} clipped samples).`
     : (peakDb > SAFE_PEAK_DBFS - 0.2
-      ? 'No clipping detected yet, but the peak is very close to distortion. Keep the limiter/output ceiling below -1 dB.'
+      ? 'No clipping detected yet, but the loudest parts are very close to distortion. Keep peaks below -1 dB to stay safe.'
       : 'No clipping detected in sample data.');
   let readiness: ReadinessCategory = 'Release Ready';
   if (clippingCount > 0 || peakDb >= -0.2 || Math.abs(loudnessDelta) > 4) readiness = 'Problem Area';

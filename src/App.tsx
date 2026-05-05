@@ -107,12 +107,12 @@ function buildFixSuggestions(result: AnalysisResult | null): string[] {
   if (!result) return [];
   const fixes: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
-  if (typeof lufs === 'number' && lufs < -20) fixes.push('Raise the volume slowly (+6 to +10 dB), then check that your peak still stays below -1 dB.');
+  if (typeof lufs === 'number' && lufs < -20) fixes.push('Turn the track up slowly, then check it still sounds clean.');
   if (typeof result.rmsDb === 'number' && result.rmsDb < -20) fixes.push('Normalize audio or re-record with stronger input');
   if ((result.channels ?? 0) === 1) fixes.push('Apply stereo widening to restore space');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Add a little bass warmth around 80–150 Hz. Keep it gentle so the track does not get muddy.');
+  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Add a little warmth if the track feels thin, but keep it subtle.');
   if (typeof result.rmsDb === 'number' && result.rmsDb < -21) fixes.push('Apply noise reduction or denoise filter');
-  fixes.push('Reduce a little muddiness around 300–800 Hz if the track sounds cloudy.');
+  fixes.push('If the track sounds muddy or cloudy, gently clean that area.');
   return fixes;
 }
 
@@ -178,7 +178,7 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
     quickSummary.push('Peaks are too hot');
     whatIHear.push('The loudest peaks are too hot and may distort.');
     whatMatters.push('Distortion may appear after export or streaming encoding.');
-    whatToDoFirst.unshift(`Step 1: Set your limiter/output ceiling to -1 dB so the loudest parts stay safe. (current peak ${peak.toFixed(1)} dBFS).`);
+    whatToDoFirst.unshift(`Step 1: Set your limiter/output so the loudest parts stay below -1 dB. (current peak ${peak.toFixed(1)} dBFS).`);
     issueSeverity.push({ label: 'Peak safety risk', severity: 'critical' });
     startWithSteps.unshift('set limiter/output ceiling');
   }
@@ -234,7 +234,7 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
     startWith: startWithSteps.length ? `👉 Start with: ${[...new Set(startWithSteps)].slice(0, 3).join(' → ')}` : '👉 Start with: Reference check → gentle polish → final export',
     whatIHear,
     whatMatters,
-    whatToDoFirst,
+    whatToDoFirst: whatToDoFirst.slice(0, 4),
     whatNotToDo: whatNotToDo.slice(0, 3),
     coachNote: issueSeverity.some((x) => x.severity === 'critical') ? 'You are close — fix the critical items first and the track will improve quickly.' : 'This track has good potential, just needs small refinements.',
     issueSeverity
@@ -260,12 +260,12 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (typeof lufs === 'number' && lufs < -16) {
     wrong.push('This track is too quiet for release.');
     matters.push('It may sound weak next to songs on Spotify or YouTube.');
-    first.push('Raise the volume slowly in small steps, then check that the peak still stays below -1 dB.');
+    first.push('Turn the track up slowly, then check it still sounds clean.');
   }
   if (typeof peak === 'number' && peak > -1) {
     wrong.push('The loudest peaks are too hot.');
     matters.push('Peaks this high can cause distortion after encoding.');
-    first.push('Set your limiter/output ceiling to -1 dB so the loudest parts stay safe.');
+    first.push('Set your limiter/output so the loudest parts stay below -1 dB.');
   }
   if (clippingCount > 0) {
     wrong.push('Clipping was detected in this file.');
@@ -275,7 +275,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (typeof low === 'number' && low < 22) {
     wrong.push('The low-end is thin.');
     matters.push('The track may feel small or lacking warmth.');
-    first.push('Add a little bass warmth around 80–150 Hz. Keep it gentle so the track does not get muddy.');
+    first.push('Add a little warmth if the track feels thin, but keep it subtle.');
   }
   if (typeof low === 'number' && low > 44) {
     wrong.push('There is too much low-end buildup.');
@@ -285,7 +285,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (typeof high === 'number' && high < 18) {
     wrong.push('The high-end is a bit muted.');
     matters.push('Muted highs can reduce clarity and sparkle.');
-    first.push('Add a small amount of brightness if the track sounds dull, then stop as soon as it feels clearer.');
+    first.push('Add a little brightness if the track feels dull, then stop once it sounds clearer.');
   }
   if (channels === 1) {
     wrong.push('This file is mono.');
@@ -318,10 +318,18 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   if (!wrong.length) {
     wrong.push('No major issues were detected in the current analysis.');
     matters.push('Your loudness, peaks, and balance look close to release-safe ranges.');
-    first.push('Do one last reference check on headphones and speakers before release.');
   }
 
-  return { wrong, matters, first, avoid, readiness };
+  const coachedFirst = [
+    'Lower the peak (set ceiling to -1 dB).',
+    'Turn up volume slowly.',
+    'Listen and compare with another song.',
+    'Adjust tone only if needed.'
+  ];
+  first.length = 0;
+  first.push(...coachedFirst);
+
+  return { wrong, matters, first: first.slice(0, 4), avoid, readiness };
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
@@ -342,7 +350,7 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   if (typeof lufs === 'number' && lufs < -16) {
     hearing.push('The track sounds quiet compared with most modern releases.');
     why.push('Overall loudness is lower than common streaming targets.');
-    next.push('Raise the volume slowly, then check that the peak still stays below -1 dB.');
+    next.push('Turn the track up slowly, then check it still sounds clean.');
   }
   if (typeof rms === 'number' && rms < -20) {
     hearing.push('It feels soft and low-energy in parts.');
@@ -357,7 +365,7 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   if (typeof low === 'number' && low < 22) {
     hearing.push('The low-end feels thin and lacks warmth.');
     why.push('Low frequencies are under-represented compared with mids and highs.');
-    next.push('Add low-end EQ around 80–200 Hz and re-check on speakers and headphones.');
+    next.push('Add a little warmth if the track feels thin, but keep it subtle.');
   }
   if (typeof low === 'number' && low > 44) {
     hearing.push('The bass feels heavy and can get boomy.');
@@ -367,7 +375,7 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   if (typeof peak === 'number' && peak > -1) {
     hearing.push('The loudest moments are very close to distortion.');
     why.push('Peak level is above the safer mastering headroom target.');
-    next.push('Set your limiter/output ceiling to -1 dB so the loudest parts stay safe.');
+    next.push('Set your limiter/output so the loudest parts stay below -1 dB.');
   }
   if (clippingCount > 0) {
     hearing.push('There may be audible crackle or harsh distortion on peaks.');
@@ -544,10 +552,10 @@ export default function App() {
       fix: 'Add stereo width',
       badgeTone: 'warn'
     },
-    'Thin low-end → Boost 80–150 Hz': {
+    'Thin low-end → Add subtle warmth': {
       title: 'Lacks bass / thin sound',
       explanation: 'Bass and warmth are weak here.',
-      fix: 'Boost low frequencies around 80–150 Hz.',
+      fix: 'Add a little warmth if the track feels thin, but keep it subtle.',
       badgeTone: 'warn'
     },
     'Custom problem area': {
@@ -597,7 +605,7 @@ export default function App() {
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
 
-  <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your Listening Coach plan.</p>}</section>
+  <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
   <section className="verdicts problem-timeline"><h2>Markers (enhanced)</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{`${m.label} → ${guidance.fix}`}</span><span>{guidance.explanation}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
@@ -618,7 +626,7 @@ export default function App() {
 
   <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
-  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Start by fixing the loudest peaks first. Then bring the overall volume up slowly. Finally, adjust tone only if the track still feels muddy, thin, harsh, or dull.</p><p>Small changes are safer than big changes. Listen after every step.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>If it sounds better, you’re going in the right direction.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 
