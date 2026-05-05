@@ -510,6 +510,14 @@ export default function App() {
   const hasAnalyzedTrack = Boolean(result);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
   const autoFixPlan = result ? buildAutoFixPlan(result) : null;
+
+  const listeningCoach = autoFixPlan ? {
+    quickSummary: autoFixPlan.wrong.slice(0, 3),
+    whatMatters: autoFixPlan.matters,
+    whatToDoFirst: autoFixPlan.first,
+    whatNotToDo: autoFixPlan.avoid.slice(0, 3),
+    coachNote: autoFixPlan.readiness[0] ?? 'Keep refining with small, intentional moves and re-check after each change.'
+  } : null;
   const runSafeModeAutoFix = useCallback(() => {
     setSafeModeFixPlan(buildSafeModeFixPlan(result));
   }, [result]);
@@ -588,6 +596,8 @@ export default function App() {
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
+
+  <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your Listening Coach plan.</p>}</section>
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
   <section className="verdicts problem-timeline"><h2>Markers (enhanced)</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{`${m.label} → ${guidance.fix}`}</span><span>{guidance.explanation}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
