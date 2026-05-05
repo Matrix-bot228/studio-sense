@@ -348,3 +348,14 @@ button.upload-btn:disabled,
   font-weight: 700;
   color: #eaf0ff;
 }
+
+.priority-fix {
+  border: 2px solid #86a5ff;
+  box-shadow: 0 0 0 1px rgba(134, 165, 255, 0.25), 0 0 20px rgba(109, 142, 255, 0.35);
+  background: linear-gradient(180deg, rgba(28, 41, 84, 0.9) 0%, rgba(13, 20, 43, 0.9) 100%);
+}
+
+.priority-fix h3 {
+  margin: 0 0 6px;
+  color: #dce7ff;
+}

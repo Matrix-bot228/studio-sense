@@ -148,6 +148,55 @@ type ListeningCoachingMode = {
   fixOrder: string[];
 };
 
+
+type PriorityFix = {
+  title: string;
+  message: string;
+};
+
+function getPriorityFix(analysis: AnalysisResult | null): PriorityFix | null {
+  if (!analysis) return null;
+
+  const clippingCount = analysis.clippingCount ?? 0;
+  const peakDb = analysis.peakDb;
+  const lufs = analysis.lufs ?? analysis.lufsEstimate;
+  const lowBalance = analysis.lowPercent ?? 0;
+  const highBalance = analysis.highPercent ?? 0;
+
+  if (clippingCount > 0 || (typeof peakDb === 'number' && peakDb >= -1)) {
+    return {
+      title: 'Fix Peaks First',
+      message: 'Your track is hitting unsafe levels. Lower limiter ceiling to -1 dBFS or below before doing anything else.'
+    };
+  }
+
+  if (typeof lufs === 'number' && lufs < -14) {
+    return {
+      title: 'Increase Loudness',
+      message: 'Your track is too quiet. Add gain or limiting gradually to reach streaming level.'
+    };
+  }
+
+  if (lowBalance < 20) {
+    return {
+      title: 'Fix Low-End',
+      message: 'Your track lacks bass. Try boosting 80–150 Hz gently.'
+    };
+  }
+
+  if (highBalance < 20) {
+    return {
+      title: 'Fix Clarity',
+      message: 'Your track lacks brightness. Add a gentle high-shelf EQ.'
+    };
+  }
+
+  return {
+    title: 'Final Polish',
+    message: 'Your track is balanced. Compare with a reference track before release.'
+  };
+}
+
 function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan | null {
   if (!result) return null;
 
@@ -512,6 +561,8 @@ export default function App() {
   const runSafeModeAutoFix = useCallback(() => {
     setSafeModeFixPlan(buildSafeModeFixPlan(result));
   }, [result]);
+  const priorityFix = useMemo(() => getPriorityFix(result), [result]);
+
   const listeningCoachingMode: ListeningCoachingMode | null = useMemo(() => {
     if (!result || !listeningCoachingModeEnabled) return null;
     const feedback: string[] = [];
@@ -646,7 +697,7 @@ export default function App() {
   <ReleaseChecklist result={result} autoMarkerCount={autoMarkers.length} />
 
 
-  <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
+  <section className="guidance priority-fix"><h2>🎧 Listening Coach — What to Fix First</h2>{priorityFix ? <><h3>{priorityFix.title}</h3><p>{priorityFix.message}</p></> : <p className="empty">Run analysis to see your highest-priority fix.</p>}</section><section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
   <section className="guidance"><h2>Fix Your Track — Step by Step</h2>{result ? <><p className="empty">Your Listening Coach recommends this order so each move helps the next one.</p><ol><li>{((result.clippingCount ?? 0) > 0 || (typeof result.peakDb === 'number' && result.peakDb >= -1)) ? 'Fix peaks first before chasing loudness.' : 'Fix clipping and peaks first so your loudest moments stay clean.'}</li><li>Then adjust loudness in small moves so it feels competitive without sounding crushed.</li><li>Then rebalance low-end or high-end only if the tone still feels off.</li><li>Then re-check against a reference track and confirm it translates well.</li></ol></> : <p className="empty">Run analysis to get your Listening Coach step-by-step repair order.</p>}</section>
 
