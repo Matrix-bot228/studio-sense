@@ -241,10 +241,16 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
   };
 }
 
-function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; avoid: string[]; readiness: string[] } {
+function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
   const first: string[] = [];
+  const listenFor: string[] = [
+    'Does it feel as loud as other songs?',
+    'Does the bass feel full but not heavy?',
+    'Do vocals and instruments stay clear?',
+    'Do loud parts stay clean without crunch or distortion?'
+  ];
   const avoid: string[] = [];
   const readiness: string[] = [];
 
@@ -253,83 +259,50 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   const rms = result.rmsDb;
   const channels = result.channels ?? 0;
   const low = result.lowPercent;
-  const mid = result.midPercent;
-  const high = result.highPercent;
   const clippingCount = result.clippingCount ?? 0;
 
-  if (typeof lufs === 'number' && lufs < -16) {
-    wrong.push('This track is too quiet for release.');
-    matters.push('It may sound weak next to songs on Spotify or YouTube.');
-    first.push('Turn the track up slowly, then check it still sounds clean.');
-  }
   if (typeof peak === 'number' && peak > -1) {
     wrong.push('The loudest peaks are too hot.');
-    matters.push('Peaks this high can cause distortion after encoding.');
-    first.push('Set your limiter/output so the loudest parts stay below -1 dB.');
+    matters.push('Peaks this high can distort after export.');
+    first.push(`Set your limiter so the loudest parts stay below -1 dB (now ${peak.toFixed(1)} dBFS). Listen to the loudest section and make sure it stays clean. Stop if you hear crunch.`);
   }
   if (clippingCount > 0) {
     wrong.push('Clipping was detected in this file.');
-    matters.push('Clipping can add crackle and harsh edges that listeners notice quickly.');
-    first.push('Reduce limiter drive or master gain, then export and re-check clipping count.');
+    matters.push('Clipping adds crackle and harsh edges.');
+    first.push('Back off limiter drive or master gain. Listen for cleaner transients and less crackle. Stop when clipping is gone.');
+  }
+  if (typeof lufs === 'number' && lufs < -16) {
+    const gainDb = Math.max(1, Math.round(-14 - lufs));
+    wrong.push('This track is too quiet for release.');
+    matters.push('It may sound weak next to streaming songs.');
+    first.push(`Turn the track up slowly by about ${gainDb} dB. Listen for it to feel closer in volume to reference songs. Stop if it starts sounding harsh or flat.`);
   }
   if (typeof low === 'number' && low < 22) {
     wrong.push('The low-end is thin.');
-    matters.push('The track may feel small or lacking warmth.');
-    first.push('Add a little warmth if the track feels thin, but keep it subtle.');
+    matters.push('The track may feel small and cold.');
+    first.push('If the track feels thin, add a little bass warmth. Listen for more fullness. Stop before it turns boomy or muddy.');
   }
   if (typeof low === 'number' && low > 44) {
     wrong.push('There is too much low-end buildup.');
-    matters.push('Boomy bass can mask vocals and reduce clarity on small speakers.');
-    first.push('Cut muddy lows gently before adding more loudness.');
-  }
-  if (typeof high === 'number' && high < 18) {
-    wrong.push('The high-end is a bit muted.');
-    matters.push('Muted highs can reduce clarity and sparkle.');
-    first.push('Add a little brightness if the track feels dull, then stop once it sounds clearer.');
-  }
-  if (channels === 1) {
-    wrong.push('This file is mono.');
-    matters.push('Mono can feel narrow compared with modern stereo releases.');
-    first.push('Confirm mono is intentional before trying any widening.');
-    avoid.push('Do not over-compress this recording because mono and low-fidelity sources break up faster.');
-  }
-  if (typeof rms === 'number' && rms < -21) {
-    wrong.push('The average signal level is very low.');
-    matters.push('Low RMS often means weak presence and higher noise risk when boosted.');
-    first.push('Recommended first step: clean noise, then rebalance EQ, then adjust loudness.');
-    avoid.push('Do not stack heavy compression and limiting at the same time on a weak source.');
-  }
-  if (typeof mid === 'number' && mid > 65) {
-    avoid.push('Do not keep boosting mids if the track already sounds boxy.');
+    matters.push('Boomy bass can hide vocals and detail.');
+    first.push('Gently reduce muddy lows. Listen for clearer vocals and tighter bass. Stop when the mix feels balanced, not thin.');
   }
 
-  if (!avoid.length) {
-    avoid.push('Do not chase loudness first—fix clipping and tonal balance before final limiting.');
-  }
+  if (channels === 1) avoid.push('Do not force wide stereo effects if mono is intentional.');
+  if (typeof rms === 'number' && rms < -21) avoid.push('Do not stack heavy compression and limiting on a weak source.');
+  if (!avoid.length) avoid.push('Do not chase loudness before peak safety and clipping are clean.');
 
   const readinessLabel = result.readiness ?? 'Needs Work';
   const scoreText = typeof result.score === 'number' ? `${Math.round(result.score)} / 100` : 'not scored yet';
   readiness.push(`Current release readiness: ${readinessLabel} (${scoreText}).`);
-  if (result.masteringSuggestion) readiness.push(`Mastering suggestion: ${result.masteringSuggestion}`);
-  if (result.loudnessVerdict) readiness.push(`Loudness check: ${result.loudnessVerdict}`);
-  if (result.balanceVerdict) readiness.push(`Balance check: ${result.balanceVerdict}`);
-  if (result.clippingVerdict) readiness.push(`Clipping check: ${result.clippingVerdict}`);
 
   if (!wrong.length) {
     wrong.push('No major issues were detected in the current analysis.');
-    matters.push('Your loudness, peaks, and balance look close to release-safe ranges.');
+    matters.push('Your loudness, peaks, and tone look close to release-safe ranges.');
+    first.push('Do a quick reference check. Listen for clean peaks, clear vocals, and balanced bass. Stop when it already feels right.');
   }
 
-  const coachedFirst = [
-    'Lower the peak (set ceiling to -1 dB).',
-    'Turn up volume slowly.',
-    'Listen and compare with another song.',
-    'Adjust tone only if needed.'
-  ];
-  first.length = 0;
-  first.push(...coachedFirst);
-
-  return { wrong, matters, first: first.slice(0, 4), avoid, readiness };
+  return { wrong, matters, first: first.slice(0, 4), listenFor, avoid: avoid.slice(0, 3), readiness: readiness.slice(0, 1) };
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
@@ -523,6 +496,7 @@ export default function App() {
     quickSummary: autoFixPlan.wrong.slice(0, 3),
     whatMatters: autoFixPlan.matters,
     whatToDoFirst: autoFixPlan.first,
+    whatToListenFor: autoFixPlan.listenFor,
     whatNotToDo: autoFixPlan.avoid.slice(0, 3),
     coachNote: autoFixPlan.readiness[0] ?? 'Keep refining with small, intentional moves and re-check after each change.'
   } : null;
@@ -605,7 +579,7 @@ export default function App() {
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
 
-  <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
+  <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
   <section className="verdicts problem-timeline"><h2>Markers (enhanced)</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{`${m.label} → ${guidance.fix}`}</span><span>{guidance.explanation}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
@@ -626,10 +600,10 @@ export default function App() {
 
   <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you’re hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
 
-  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>5) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>If it sounds better, you’re going in the right direction.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What to listen for</h3><ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul><h3>5) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>6) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>You don’t need to get it perfect.</p><p>If it sounds better than before, you’re improving.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 
-  <section className="guidance"><h2>Listening Coach Plan (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Get Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST (PRIORITY ORDER)</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “Get Coach Plan” for a structured listening coach plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach Plan</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Build Listening Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🎧 WHAT TO LISTEN FOR</h3><ul><li>Does it feel as loud as other songs?</li><li>Does the bass feel full but not heavy?</li><li>Do vocals/instruments stay clear?</li><li>Do loud parts stay clean without crunch or distortion?</li></ul><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “Build Listening Coach Plan” for a structured listening coach plan.</p>}</section>
 </section></main>;
 }
