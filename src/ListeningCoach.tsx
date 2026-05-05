@@ -1,6 +1,7 @@
 type ListeningCoachProps = {
   lufs: number | null | undefined;
   peak: number | null | undefined;
+  clipping?: number | null | undefined;
   balance: {
     low: number;
     high: number;
@@ -12,11 +13,13 @@ type CoachFeedback = {
   message: string;
 };
 
-function ListeningCoach({ lufs, peak, balance }: ListeningCoachProps) {
+function ListeningCoach({ lufs, peak, clipping = 0, balance }: ListeningCoachProps) {
+  const clippingCount = clipping ?? 0;
+
   const getFeedback = (): CoachFeedback[] => {
     const feedback: CoachFeedback[] = [];
 
-    if (typeof peak === 'number' && peak > -1) {
+    if ((typeof peak === 'number' && peak >= -1) || clippingCount > 0) {
       feedback.push({
         title: 'Fix peaks first',
         message:
@@ -61,10 +64,10 @@ function ListeningCoach({ lufs, peak, balance }: ListeningCoachProps) {
 
   return (
     <section className="guidance">
-      <h2>🎧 Listening Coach</h2>
-      {feedback.map((item) => (
+      <h2>🎯 Fix Your Track (Step-by-Step)</h2>
+      {feedback.map((item, index) => (
         <div key={item.title}>
-          <h3>{item.title}</h3>
+          <h3>{`Step ${index + 1} — ${item.title}`}</h3>
           <p>{item.message}</p>
         </div>
       ))}
