@@ -127,7 +127,11 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   if (loudnessDelta > 1) loudnessVerdict = `Too loud by about ${loudnessDelta.toFixed(1)} dB. Reduce gain/limiter output.`;
   if (loudnessDelta < -1) loudnessVerdict = `Too quiet by about ${Math.abs(loudnessDelta).toFixed(1)} dB. Raise the volume slowly, then check that the peak still stays below -1 dB.`;
   const peakSafetyVerdict = peakDb < SAFE_PEAK_DBFS ? 'Safe peak headroom.' : `Peak is above safe target by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB. Set your limiter/output ceiling to -1 dB so the loudest parts stay safe.`;
-  const clippingVerdict = clippingCount > 0 ? `Clipping risk detected (${clippingCount} clipped samples).` : 'No clipping detected in sample data.';
+  const clippingVerdict = clippingCount > 0
+    ? `Clipping risk detected (${clippingCount} clipped samples).`
+    : (peakDb > SAFE_PEAK_DBFS - 0.2
+      ? 'No clipping detected yet, but the peak is very close to distortion. Keep the limiter/output ceiling below -1 dB.'
+      : 'No clipping detected in sample data.');
   let readiness: ReadinessCategory = 'Release Ready';
   if (clippingCount > 0 || peakDb >= -0.2 || Math.abs(loudnessDelta) > 4) readiness = 'Problem Area';
   else if (Math.abs(loudnessDelta) > 1.5 || peakDb > SAFE_PEAK_DBFS || lowPercent > 44 || highPercent < 10) readiness = 'Needs Work';
