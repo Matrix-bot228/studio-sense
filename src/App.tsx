@@ -128,10 +128,28 @@ function detectAudioType(result: AnalysisResult | null): string {
 
 
 
-function buildSafeModeFixPlan(result: AnalysisResult | null): string[] {
-  if (!result) return [];
+type CoachIssue = { label: string; severity: 'critical' | 'important' | 'optional' };
+type SafeModeCoachPlan = {
+  quickSummary: string[];
+  startWith: string;
+  whatIHear: string[];
+  whatMatters: string[];
+  whatToDoFirst: string[];
+  whatNotToDo: string[];
+  coachNote: string;
+  issueSeverity: CoachIssue[];
+};
 
-  const lines: string[] = [];
+function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan | null {
+  if (!result) return null;
+
+  const quickSummary: string[] = [];
+  const whatIHear: string[] = [];
+  const whatMatters: string[] = [];
+  const whatToDoFirst: string[] = [];
+  const whatNotToDo: string[] = [];
+  const issueSeverity: CoachIssue[] = [];
+  const startWithSteps: string[] = [];
   const lufs = result.lufsEstimate ?? result.lufs;
   const peak = result.peakDb;
   const rms = result.rmsDb;
@@ -141,56 +159,86 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): string[] {
   const high = result.highPercent;
   const clippingCount = result.clippingCount ?? 0;
 
-  if (typeof lufs === 'number') {
-    if (lufs < -16) {
-      const gainDb = Math.max(1, Math.round(-14 - lufs));
-      lines.push(`Loudness: This track is too quiet and may sound weak next to commercial songs. Try increasing gain by about ${gainDb} dB, but keep the final peak below -1 dBFS.`);
-    } else if (lufs > -10) {
-      lines.push('Loudness: This track is already very loud. Avoid pushing level further to reduce distortion risk.');
-    } else {
-      lines.push('Loudness: Loudness is in a usable range for streaming-style delivery.');
-    }
+  if (typeof lufs === 'number' && lufs < -16) {
+    const gainDb = Math.max(1, Math.round(-14 - lufs));
+    quickSummary.push('Slightly under loudness target');
+    whatIHear.push(`Your track is slightly under target — a small gain boost of about ${gainDb} dB will improve presence.`);
+    whatMatters.push('This may sound weak next to Spotify or YouTube releases.');
+    whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: Raise input gain gently (+${gainDb} dB), then use a limiter to approach target loudness.`);
+    issueSeverity.push({ label: 'Low loudness target', severity: 'important' });
+    startWithSteps.push('adjust gain');
+  } else if (typeof lufs === 'number' && lufs > -10) {
+    quickSummary.push('Already very loud');
+    whatIHear.push('Your track is already very loud and may be overworked if pushed more.');
+    whatMatters.push('Extra loudness can increase fatigue and reduce dynamics.');
+    issueSeverity.push({ label: 'Very high loudness', severity: 'important' });
   }
 
-  if (typeof peak === 'number') {
-    lines.push(`Peak safety: The peak is ${peak <= -1 ? 'safe' : 'not safe'} (${peak.toFixed(1)} dBFS).`);
+  if (typeof peak === 'number' && peak > -1) {
+    quickSummary.push('Peaks are too hot');
+    whatIHear.push('The loudest peaks are too hot and may distort.');
+    whatMatters.push('Distortion may appear after export or streaming encoding.');
+    whatToDoFirst.unshift(`Step 1: Lower limiter/output ceiling to -1 dBFS first (current peak ${peak.toFixed(1)} dBFS).`);
+    issueSeverity.push({ label: 'Peak safety risk', severity: 'critical' });
+    startWithSteps.unshift('lower ceiling');
+  }
+
+  if (clippingCount > 0) {
+    quickSummary.push('Clipping detected');
+    whatIHear.push('Some moments may crackle because clipping is present.');
+    whatMatters.push('Clipping artifacts can sound harsh and unprofessional.');
+    issueSeverity.push({ label: 'Clipping detected', severity: 'critical' });
   }
 
   if (typeof low === 'number' && typeof mid === 'number' && typeof high === 'number') {
     if (low < 22) {
-      lines.push('Tone balance: The low-end is thin, so the song may feel small or lacking warmth. Try gentle bass EQ before limiting.');
+      quickSummary.push('Low-end lacks warmth');
+      whatIHear.push('The sound feels thin with limited low-end warmth.');
+      whatMatters.push('Lack of bass reduces warmth and depth on full-range systems.');
+      issueSeverity.push({ label: 'Thin low-end balance', severity: 'important' });
+      whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: After gain staging, add a gentle EQ boost around 80–150 Hz and re-check balance.`);
+      startWithSteps.push('balance EQ');
     } else if (low > 44) {
-      lines.push('Tone balance: The low-end is heavy and may mask clarity. Cut muddy bass gently before adding loudness.');
+      whatIHear.push('The low-end is heavy and can blur the mix.');
+      whatMatters.push('Boomy bass can mask vocals and reduce clarity.');
+      issueSeverity.push({ label: 'Heavy low-end balance', severity: 'important' });
+      whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: After peak/loudness fixes, cut muddy lows gently before adding more level.`);
     } else if (high < 18) {
-      lines.push('Tone balance: The high-end is muted. Add a very gentle high-shelf and stop once clarity improves.');
+      whatIHear.push('The top-end is muted and lacks sparkle.');
+      whatMatters.push('Muted highs may reduce clarity and presence.');
+      issueSeverity.push({ label: 'Muted high-end', severity: 'optional' });
     } else if (mid > 65) {
-      lines.push('Tone balance: Midrange is dominant and may sound boxy. Use subtle subtractive EQ in the low-mid range.');
-    } else {
-      lines.push('Tone balance: Low, mid, and high energy look reasonably balanced.');
+      whatIHear.push('Midrange dominates, which can feel boxy.');
+      whatMatters.push('Too much low-mid energy can reduce openness.');
+      issueSeverity.push({ label: 'Boxy midrange', severity: 'optional' });
     }
   }
 
   if (channels === 1 || (typeof rms === 'number' && rms < -21)) {
-    lines.push('Mono/quality: This looks like mono or low-fidelity audio. Do not over-compress it.');
-  } else {
-    lines.push('Mono/quality: Stereo and average level look healthy enough for gentle mastering moves.');
+    whatIHear.push('The track feels narrow and low-fidelity in places.');
+    whatMatters.push('Limited width can make it feel small compared with modern stereo tracks.');
+    whatToDoFirst.push(`Step ${whatToDoFirst.length + 1}: If mono is not intentional, apply subtle stereo widening after gain and peak control.`);
+    issueSeverity.push({ label: 'Mono/low-fidelity image', severity: 'optional' });
   }
 
-  if (clippingCount > 0) {
-    lines.push('First step: Reduce clipping first, then rebalance EQ, then adjust loudness.');
-  } else {
-    lines.push('First step: Clean noise, then rebalance EQ, then adjust loudness.');
-  }
+  whatNotToDo.push('Do not push loudness before fixing clipping or unsafe peaks.');
+  if (channels === 1 || (typeof rms === 'number' && rms < -21)) whatNotToDo.push('Avoid over-compressing low-quality or mono sources.');
+  if (typeof low === 'number' && low < 22) whatNotToDo.push('Do not over-boost bass — use small EQ moves and level-match.');
 
-  const readiness = result.readiness ?? 'Needs Work';
-  lines.push(`Release readiness: ${readiness}.`);
-  if (typeof result.score === 'number') lines.push(`Readiness score: ${Math.round(result.score)} / 100.`);
-  if (result.loudnessVerdict) lines.push(`Loudness verdict: ${result.loudnessVerdict}`);
-  if (result.balanceVerdict) lines.push(`Balance verdict: ${result.balanceVerdict}`);
-  if (result.clippingVerdict) lines.push(`Clipping verdict: ${result.clippingVerdict}`);
-  if (result.masteringSuggestion) lines.push(`Mastering suggestion: ${result.masteringSuggestion}`);
+  if (!whatIHear.length) whatIHear.push('Your track sounds balanced and close to release-safe levels.');
+  if (!whatMatters.length) whatMatters.push('This should translate well across streaming playback systems.');
+  if (!whatToDoFirst.length) whatToDoFirst.push('Step 1: Do a final reference check on headphones and speakers.');
 
-  return lines;
+  return {
+    quickSummary: quickSummary.slice(0, 3),
+    startWith: startWithSteps.length ? `👉 Start with: ${[...new Set(startWithSteps)].slice(0, 3).join(' → ')}` : '👉 Start with: Reference check → gentle polish → final export',
+    whatIHear,
+    whatMatters,
+    whatToDoFirst,
+    whatNotToDo: whatNotToDo.slice(0, 3),
+    coachNote: issueSeverity.some((x) => x.severity === 'critical') ? 'You are close — fix the critical items first and the track will improve quickly.' : 'This track has good potential, just needs small refinements.',
+    issueSeverity
+  };
 }
 
 function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; avoid: string[]; readiness: string[] } {
@@ -347,7 +395,7 @@ export default function App() {
   const [endSec, setEndSec] = useState<number | null>(null);
   const [sectionResult, setSectionResult] = useState<AnalysisResult | null>(null);
   const [problemNote, setProblemNote] = useState('');
-  const [safeModeFixPlan, setSafeModeFixPlan] = useState<string[]>([]);
+  const [safeModeFixPlan, setSafeModeFixPlan] = useState<SafeModeCoachPlan | null>(null);
   const [manualProblemAreas, setManualProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
@@ -564,6 +612,6 @@ export default function App() {
 
   <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section>
 
-  <section className="guidance"><h2>Auto Fix Plan (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Generate Fix Plan</button></div>{safeModeFixPlan.length ? <ul>{safeModeFixPlan.map((item) => <li key={`safe-fix-${item}`}>{item}</li>)}</ul> : <p className="empty">Run analysis, then generate a safe beginner-friendly fix plan.</p>}</section>
+  <section className="guidance"><h2>Listening Coach (Safe Mode)</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>🎯 Improve My Track</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST (PRIORITY ORDER)</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “🎯 Improve My Track” for a structured listening coach plan.</p>}</section>
 </section></main>;
 }
