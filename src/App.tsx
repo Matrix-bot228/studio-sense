@@ -140,6 +140,13 @@ type SafeModeCoachPlan = {
   issueSeverity: CoachIssue[];
 };
 
+type ListeningCoachingMode = {
+  modeName: string;
+  intro: string;
+  dynamicFeedback: string[];
+  fixOrder: string[];
+};
+
 function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan | null {
   if (!result) return null;
 
@@ -387,6 +394,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [largeFileWarning, setLargeFileWarning] = useState('');
   const [fileName, setFileName] = useState('No file selected');
+  const [listeningCoachingModeEnabled, setListeningCoachingModeEnabled] = useState(true);
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
@@ -503,6 +511,44 @@ export default function App() {
   const runSafeModeAutoFix = useCallback(() => {
     setSafeModeFixPlan(buildSafeModeFixPlan(result));
   }, [result]);
+  const listeningCoachingMode: ListeningCoachingMode | null = useMemo(() => {
+    if (!result || !listeningCoachingModeEnabled) return null;
+    const feedback: string[] = [];
+    const lufs = result.lufsEstimate ?? result.lufs;
+    const peak = result.peakDb;
+    const low = result.lowPercent;
+    const mid = result.midPercent;
+    const high = result.highPercent;
+
+    if (typeof peak === 'number') {
+      feedback.push(peak > -1
+        ? `Your loudest hit is at ${peak.toFixed(1)} dBFS, so let’s pull that down first to keep playback clean.`
+        : `Great start: your peak is ${peak.toFixed(1)} dBFS, which is in a safe zone.`);
+    }
+    if (typeof lufs === 'number') {
+      feedback.push(lufs < -16
+        ? `Your song is currently around ${lufs.toFixed(1)} LUFS, so a small lift will help it sit better next to other releases.`
+        : lufs > -10
+          ? `You are around ${lufs.toFixed(1)} LUFS already, so avoid pushing harder and protect your punch.`
+          : `Nice loudness zone at about ${lufs.toFixed(1)} LUFS. Focus on feel, not more level.`);
+    }
+    if (typeof low === 'number' && typeof mid === 'number' && typeof high === 'number') {
+      if (low < 22) feedback.push(`Tone check: low end is light (${low.toFixed(0)}%), so add a touch of warmth only after level is stable.`);
+      else if (low > 44) feedback.push(`Tone check: lows are heavy (${low.toFixed(0)}%), so trim mud for clearer vocals and tighter kick.`);
+      else feedback.push(`Tone check: low/mid/high balance (${low.toFixed(0)}/${mid.toFixed(0)}/${high.toFixed(0)}%) looks healthy overall.`);
+    }
+
+    return {
+      modeName: 'Listening Coaching Mode',
+      intro: 'Friendly, step-by-step mastering help based on what your track is doing right now.',
+      dynamicFeedback: feedback,
+      fixOrder: [
+        'Step 1: Fix peaks — make sure the loudest moments stay clean and controlled.',
+        'Step 2: Adjust loudness — bring volume up (or down) in small moves while keeping transients natural.',
+        'Step 3: Adjust tone — shape bass/mids/highs last, once level decisions are done.'
+      ]
+    };
+  }, [result, listeningCoachingModeEnabled]);
   const soundProfile = buildSoundProfile(result);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
@@ -580,6 +626,7 @@ export default function App() {
 
 
   <section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
+  <section className="guidance"><h2>🟦 Listening Coach: Listening Coaching Mode</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setListeningCoachingModeEnabled((v) => !v)}>{listeningCoachingModeEnabled ? 'Mode: On' : 'Mode: Off'}</button></div>{listeningCoachingMode ? <><p>{listeningCoachingMode.intro}</p><h3>Dynamic feedback</h3><ul>{listeningCoachingMode.dynamicFeedback.map((item) => <li key={`dynamic-${item}`}>{item}</li>)}</ul><h3>Fix Order</h3><ol>{listeningCoachingMode.fixOrder.map((step) => <li key={step}>{step}</li>)}</ol></> : <p className="empty">Turn on Listening Coaching Mode and run analysis to get guided feedback.</p>}</section>
   <section className="verdicts"><h2>Whole Track Analysis</h2>{verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Upload a track to see verdicts.</p>}</section>
 
   <section className="verdicts problem-timeline"><h2>Markers (enhanced)</h2>{hasAnalyzedTrack ? <>{combinedProblemMarkers.length ? <><ul>{combinedProblemMarkers.map((m) => { const guidance = markerGuidance[m.label] ?? { title: m.label, explanation: m.explanation, fix: 'Review this section and compare against a reference track.', badgeTone: 'warn' as const }; return <li key={m.id} className="timeline-item"><div className="timeline-title-row"><span className={`pill ${guidance.badgeTone}`}>{guidance.title}</span><strong>{formatClock(m.timeSec)}</strong></div><span>{`${m.label} → ${guidance.fix}`}</span><span>{guidance.explanation}</span><button className="jump-btn" type="button" onClick={() => setSeekToSec(m.timeSec)}>Jump</button></li>; })}</ul></> : <p className="empty">✅ No major problem sections detected. Your track is close to release-ready.</p>}</> : <p className="empty">Upload a track to generate problem markers.</p>}</section>
