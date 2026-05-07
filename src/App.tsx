@@ -127,14 +127,62 @@ function buildFixSuggestions(result: AnalysisResult | null): string[] {
   return fixes;
 }
 
-function detectAudioType(result: AnalysisResult | null): string {
+function detectAudioType(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
+  const normalizedName = fileName.toLowerCase();
+  const extension = normalizedName.split('.').pop() ?? '';
+  const isWav = extension === 'wav' || extension === 'wave';
+  const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
   const channels = result.channels ?? 0;
-  const rms = result.rmsDb ?? -99;
-  if (channels === 1 && rms < -20) return 'Likely old recording, phone capture, or tape source';
-  if (rms < -21) return 'Low-quality recording with possible noise or compression artifacts';
-  if (channels === 2 && rms > -18) return 'Modern digital recording';
-  return 'Standard recording';
+  const rms = result.rmsDb;
+  const clippingCount = result.clippingCount ?? 0;
+  const sampleRate = result.sampleRate ?? 0;
+  const low = result.lowPercent;
+  const high = result.highPercent;
+
+  const studioStemPattern = /(saxophone|vocal|acappella|guitar|bass|drums|overhead|closemic|room|stem|raw|multitrack|mic|kick|snare|piano)/i;
+  const archivalPattern = /(tape|cassette|old|phone|recording|copy|transfer)/i;
+
+  const lowRms = typeof rms === 'number' && rms < -22;
+  const weakRms = typeof rms === 'number' && rms < -20;
+  const safePeaks = typeof result.peakDb === 'number' && result.peakDb <= -1;
+  const extremeImbalance = (typeof low === 'number' && typeof high === 'number') && (low < 10 || high < 8 || low > 58 || high > 50);
+  const hissIndicators = (typeof high === 'number' && high > 45) || (typeof low === 'number' && low < 10);
+
+  if (isWav && studioStemPattern.test(normalizedName)) {
+    return 'Raw studio stem / multitrack source — This looks like an isolated studio track. It may be quiet or mono because it is meant to be mixed, not released by itself. Source quality may be good, but this is not a finished master.';
+  }
+
+  if (isWav && channels === 1 && clippingCount === 0 && safePeaks) {
+    return 'Mono studio stem — This appears to be a clean mono studio source. Mono is normal for individual microphones or isolated instruments. Source quality may be good, but this is not a finished master.';
+  }
+
+  if (isWav && (sampleRate === 44100 || sampleRate === 48000) && clippingCount === 0) {
+    return 'Modern digital recording';
+  }
+
+  const oldSignalCount = [
+    isCompressed && archivalPattern.test(normalizedName),
+    lowRms,
+    channels === 1,
+    extremeImbalance,
+    hissIndicators,
+    archivalPattern.test(normalizedName)
+  ].filter(Boolean).length;
+
+  if (oldSignalCount >= 3) {
+    if (archivalPattern.test(normalizedName)) {
+      return 'Old tape / archival transfer — This appears to have analog age, weak signal, or transfer limitations.';
+    }
+    return 'Phone or low-fidelity capture — This appears to have analog age, weak signal, or transfer limitations.';
+  }
+
+  if (isCompressed && (weakRms || clippingCount > 0 || extremeImbalance)) {
+    return 'Streaming/YouTube compressed audio';
+  }
+
+  if (channels >= 2 && typeof rms === 'number' && rms > -19) return 'Modern digital recording';
+  return 'Modern digital recording';
 }
 
 
@@ -744,7 +792,7 @@ export default function App() {
   const soundProfile = buildSoundProfile(result);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
-  const audioType = detectAudioType(result);
+  const audioType = detectAudioType(result, fileName);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet → +8 dB gain': {
       title: 'Volume too low',
