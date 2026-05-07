@@ -54,7 +54,7 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
   const candidates = [
     { active: (result.lufsEstimate ?? 0) < -18, label: 'Too quiet → add gain', color: 'red' as const },
     { active: (result.rmsDb ?? 0) < -20, label: 'Weak signal → normalize', color: 'yellow' as const },
-    { active: (result.channels ?? 0) === 1, label: 'Low quality → reduce noise + add width', color: 'red' as const },
+    { active: (result.channels ?? 0) === 1, label: 'Mono source detected → check if this is an intentional stem', color: 'blue' as const },
     { active: (result.lowPercent ?? 100) < 20, label: 'Thin sound → boost bass', color: 'yellow' as const }
   ];
   const slots = [0.1, 0.3, 0.5, 0.7];

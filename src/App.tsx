@@ -4,7 +4,8 @@ import ReleaseChecklist from './ReleaseChecklist';
 import ListeningCoach from './ListeningCoach';
 
 type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
-type SourceQualityCategory = 'Low Quality MP3' | 'Standard MP3' | 'Good Quality MP3' | 'Low Quality WAV' | 'Good Quality WAV' | 'Pro Raw WAV' | 'Mastered Release Candidate';
+type SourceQualityCategory = 'Low Fidelity Source' | 'Standard Compressed Audio' | 'Good Production Source' | 'Professional Studio Source';
+type MasteringReadinessCategory = 'Release Ready' | 'Needs Work' | 'Not Mastered' | 'Not Recommended';
 type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
 
 type AnalysisResult = {
@@ -29,6 +30,8 @@ type AnalysisResult = {
 };
 type SourceQualityAssessment = {
   rating: SourceQualityCategory;
+  confidence: number;
+  masteringReadiness: MasteringReadinessCategory;
   sourceTypeGuess: string;
   note: string;
   notMasteredYet: boolean;
@@ -375,10 +378,10 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 function toneForSourceQuality(value?: SourceQualityCategory): BadgeTone {
-  if (value === 'Mastered Release Candidate' || value === 'Pro Raw WAV') return 'good';
-  if (value === 'Good Quality WAV' || value === 'Good Quality MP3') return 'info';
-  if (value === 'Standard MP3') return 'warn';
-  if (value === 'Low Quality MP3' || value === 'Low Quality WAV') return 'bad';
+  if (value === 'Professional Studio Source') return 'good';
+  if (value === 'Good Production Source') return 'info';
+  if (value === 'Standard Compressed Audio') return 'warn';
+  if (value === 'Low Fidelity Source') return 'bad';
   return 'info';
 }
 
@@ -410,7 +413,9 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
 
   if (isWav && stereo && clippingCount === 0 && balancedTone && typeof peak === 'number' && peak <= -1.2 && releaseReadyScore) {
     return {
-      rating: 'Mastered Release Candidate',
+      rating: 'Professional Studio Source',
+      confidence: 94,
+      masteringReadiness: 'Release Ready',
       sourceTypeGuess,
       note: 'This appears close to a finished master.',
       notMasteredYet: false
@@ -419,16 +424,20 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
 
   if (isWav && clippingCount === 0 && safeHeadroom && lowLoudness && balancedTone) {
     return {
-      rating: 'Pro Raw WAV',
+      rating: 'Professional Studio Source',
+      confidence: 92,
+      masteringReadiness: 'Not Mastered',
       sourceTypeGuess,
-      note: 'Clean raw source with headroom. This is not poor quality — it likely needs mixing or mastering (not mastered yet).',
+      note: 'Professional raw source detected. File appears intentionally unmastered.',
       notMasteredYet: true
     };
   }
 
   if (isWav && (clippingCount > 0 || (channels === 1 && !lowLoudness) || boomyLowEnd || weakSignal || extremeBalance)) {
     return {
-      rating: 'Low Quality WAV',
+      rating: clippingCount > 2 || weakSignal ? 'Low Fidelity Source' : 'Good Production Source',
+      confidence: 78,
+      masteringReadiness: clippingCount > 2 ? 'Not Recommended' : 'Needs Work',
       sourceTypeGuess,
       note: 'This is a WAV file, but the audio itself still has quality issues.',
       notMasteredYet: lowLoudness && clippingCount === 0 && safeHeadroom
@@ -437,16 +446,20 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
 
   if (isWav && stereo && clippingCount === 0 && balancedTone) {
     return {
-      rating: 'Good Quality WAV',
+      rating: 'Professional Studio Source',
+      confidence: 86,
+      masteringReadiness: lowLoudness ? 'Not Mastered' : 'Needs Work',
       sourceTypeGuess,
-      note: 'Clean WAV source suitable for polishing.',
+      note: lowLoudness ? 'Professional studio exports are often quieter before mastering.' : 'Clean WAV source suitable for polishing.',
       notMasteredYet: lowLoudness && safeHeadroom
     };
   }
 
   if (isCompressed && (mutedHighs || clippingCount > 0 || weakSignal || boomyLowEnd || extremeBalance)) {
     return {
-      rating: 'Low Quality MP3',
+      rating: 'Low Fidelity Source',
+      confidence: 84,
+      masteringReadiness: 'Not Recommended',
       sourceTypeGuess,
       note: 'Compressed source with issues. Clean up artifacts, rumble, or harshness before mastering.',
       notMasteredYet: lowLoudness && safeHeadroom
@@ -455,7 +468,9 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
 
   if (isCompressed && stereo && clippingCount === 0 && balancedTone && strongSignal) {
     return {
-      rating: 'Good Quality MP3',
+      rating: 'Good Production Source',
+      confidence: 80,
+      masteringReadiness: 'Needs Work',
       sourceTypeGuess,
       note: 'Strong compressed source. Suitable for basic mastering checks.',
       notMasteredYet: false
@@ -464,7 +479,9 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
 
   if (isCompressed) {
     return {
-      rating: 'Standard MP3',
+      rating: 'Standard Compressed Audio',
+      confidence: 74,
+      masteringReadiness: 'Needs Work',
       sourceTypeGuess,
       note: 'Usable compressed source. Good for beginner release prep, but may have MP3 limits.',
       notMasteredYet: lowLoudness && safeHeadroom
@@ -472,7 +489,9 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
   }
 
   return {
-    rating: clippingCount > 4 || extremeBalance ? 'Low Quality WAV' : 'Good Quality WAV',
+    rating: clippingCount > 4 || extremeBalance ? 'Low Fidelity Source' : 'Good Production Source',
+    confidence: 68,
+    masteringReadiness: clippingCount > 4 ? 'Not Recommended' : 'Needs Work',
     sourceTypeGuess,
     note: clippingCount > 4 ? 'Source has quality issues that should be fixed before mastering.' : 'Clean source with usable balance, but verify mastering readiness separately.',
     notMasteredYet: false
@@ -805,7 +824,7 @@ export default function App() {
 
 
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
-  <section className="sound-profile-card"><h2>Source Quality</h2><p><strong>Source Quality rating:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p></section>
+  <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
