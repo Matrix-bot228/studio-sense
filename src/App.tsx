@@ -4,7 +4,7 @@ import ReleaseChecklist from './ReleaseChecklist';
 import ListeningCoach from './ListeningCoach';
 
 type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
-type SourceQualityCategory = 'Low' | 'OK' | 'Good' | 'Great' | 'Pro';
+type SourceQualityCategory = 'Low Quality MP3' | 'Standard MP3' | 'Good Quality MP3' | 'Low Quality WAV' | 'Good Quality WAV' | 'Pro Raw WAV' | 'Mastered Release Candidate';
 type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
 
 type AnalysisResult = {
@@ -29,8 +29,8 @@ type AnalysisResult = {
 };
 type SourceQualityAssessment = {
   rating: SourceQualityCategory;
+  sourceTypeGuess: string;
   note: string;
-  example: string;
   notMasteredYet: boolean;
 };
 
@@ -307,7 +307,7 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
   };
 }
 
-function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[] } {
+function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
   const first: string[] = [];
@@ -319,6 +319,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
   ];
   const avoid: string[] = [];
   const readiness: string[] = [];
+  const sourceQualityNotes: string[] = [];
 
   const lufs = result.lufsEstimate ?? result.lufs;
   const peak = result.peakDb;
@@ -360,6 +361,7 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
 
   const readinessLabel = result.readiness ?? 'Needs Work';
   const scoreText = typeof result.score === 'number' ? `${Math.round(result.score)} / 100` : 'not scored yet';
+  if (sourceQuality) sourceQualityNotes.push(`Source quality: ${sourceQuality.rating}. ${sourceQuality.note}`);
   readiness.push(`Current release readiness: ${readinessLabel} (${scoreText}).`);
 
   if (!wrong.length) {
@@ -368,15 +370,15 @@ function buildAutoFixPlan(result: AnalysisResult): { wrong: string[]; matters: s
     first.push('Do a quick reference check. Listen for clean peaks, clear vocals, and balanced bass. Stop when it already feels right.');
   }
 
-  return { wrong, matters, first: first.slice(0, 4), listenFor, avoid: avoid.slice(0, 3), readiness: readiness.slice(0, 1) };
+  return { wrong, matters, first: first.slice(0, 4), listenFor, avoid: avoid.slice(0, 3), readiness: readiness.slice(0, 1), sourceQuality: sourceQualityNotes.slice(0, 1) };
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 function toneForSourceQuality(value?: SourceQualityCategory): BadgeTone {
-  if (value === 'Pro' || value === 'Great') return 'good';
-  if (value === 'Good') return 'info';
-  if (value === 'OK') return 'warn';
-  if (value === 'Low') return 'bad';
+  if (value === 'Mastered Release Candidate' || value === 'Pro Raw WAV') return 'good';
+  if (value === 'Good Quality WAV' || value === 'Good Quality MP3') return 'info';
+  if (value === 'Standard MP3') return 'warn';
+  if (value === 'Low Quality MP3' || value === 'Low Quality WAV') return 'bad';
   return 'info';
 }
 
@@ -399,49 +401,85 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
   const extremeBalance = isExtremeBalance(result.lowPercent, result.midPercent, result.highPercent);
   const mutedHighs = typeof result.highPercent === 'number' && result.highPercent < 14;
   const lowLoudness = typeof lufs === 'number' && lufs < -16;
+  const weakSignal = typeof result.rmsDb === 'number' && result.rmsDb < -21;
+  const boomyLowEnd = typeof result.lowPercent === 'number' && result.lowPercent > 46;
+  const strongSignal = typeof result.rmsDb === 'number' && result.rmsDb > -16;
+  const balancedTone = !extremeBalance && !mutedHighs && !boomyLowEnd;
+  const releaseReadyScore = (result.score ?? 0) >= 85 && (result.readiness === 'Release Ready' || (lufs !== null && typeof lufs === 'number' && lufs >= -14.5));
+  const sourceTypeGuess = `${isWav ? 'WAV' : isCompressed ? 'MP3/compressed' : 'Unknown'}${typeof result.sampleRate === 'number' ? `, ${result.sampleRate} Hz` : ''}${channels ? `, ${channels === 1 ? 'mono' : 'stereo'}` : ''}`;
 
-  if (isWav && stereo && clippingCount === 0 && safeHeadroom && !extremeBalance) {
+  if (isWav && stereo && clippingCount === 0 && balancedTone && typeof peak === 'number' && peak <= -1.2 && releaseReadyScore) {
     return {
-      rating: typeof result.sampleRate === 'number' && result.sampleRate >= 48000 ? 'Pro' : 'Great',
-      note: lowLoudness ? 'Great source quality, not mastered yet. Clean source with healthy headroom. Not mastered yet.' : 'Clean source with healthy headroom.',
-      example: typeof result.sampleRate === 'number' && result.sampleRate >= 48000
-        ? 'This appears well-recorded and well-prepared for mastering.'
-        : 'This sounds like a clean raw studio-quality file.',
-      notMasteredYet: lowLoudness
+      rating: 'Mastered Release Candidate',
+      sourceTypeGuess,
+      note: 'This appears close to a finished master.',
+      notMasteredYet: false
     };
   }
 
-  if (isCompressed && (mutedHighs || extremeBalance)) {
+  if (isWav && clippingCount === 0 && safeHeadroom && lowLoudness && balancedTone) {
     return {
-      rating: mutedHighs ? 'Low' : 'OK',
-      note: lowLoudness ? 'Compressed source with limited top-end detail. Not mastered yet.' : 'Compressed source with limited top-end detail.',
-      example: mutedHighs
-        ? 'This file may have compression artifacts, noise, or limited frequency range.'
-        : 'This file is usable but may have some compression or balance limits.',
+      rating: 'Pro Raw WAV',
+      sourceTypeGuess,
+      note: 'Clean raw source with headroom. This is not poor quality — it likely needs mixing or mastering (not mastered yet).',
+      notMasteredYet: true
+    };
+  }
+
+  if (isWav && (clippingCount > 0 || (channels === 1 && !lowLoudness) || boomyLowEnd || weakSignal || extremeBalance)) {
+    return {
+      rating: 'Low Quality WAV',
+      sourceTypeGuess,
+      note: 'This is a WAV file, but the audio itself still has quality issues.',
+      notMasteredYet: lowLoudness && clippingCount === 0 && safeHeadroom
+    };
+  }
+
+  if (isWav && stereo && clippingCount === 0 && balancedTone) {
+    return {
+      rating: 'Good Quality WAV',
+      sourceTypeGuess,
+      note: 'Clean WAV source suitable for polishing.',
       notMasteredYet: lowLoudness && safeHeadroom
     };
   }
 
-  if (stereo && clippingCount <= 1 && !extremeBalance) {
+  if (isCompressed && (mutedHighs || clippingCount > 0 || weakSignal || boomyLowEnd || extremeBalance)) {
     return {
-      rating: 'Good',
-      note: lowLoudness && safeHeadroom ? 'Clean source and usable balance. Not mastered yet.' : 'Clean source and usable balance.',
-      example: 'This file is clean enough to polish.',
+      rating: 'Low Quality MP3',
+      sourceTypeGuess,
+      note: 'Compressed source with issues. Clean up artifacts, rumble, or harshness before mastering.',
+      notMasteredYet: lowLoudness && safeHeadroom
+    };
+  }
+
+  if (isCompressed && stereo && clippingCount === 0 && balancedTone && strongSignal) {
+    return {
+      rating: 'Good Quality MP3',
+      sourceTypeGuess,
+      note: 'Strong compressed source. Suitable for basic mastering checks.',
+      notMasteredYet: false
+    };
+  }
+
+  if (isCompressed) {
+    return {
+      rating: 'Standard MP3',
+      sourceTypeGuess,
+      note: 'Usable compressed source. Good for beginner release prep, but may have MP3 limits.',
       notMasteredYet: lowLoudness && safeHeadroom
     };
   }
 
   return {
-    rating: clippingCount > 4 || extremeBalance ? 'Low' : 'OK',
-    note: clippingCount > 4 ? 'Source has quality issues that should be fixed before mastering.' : 'Source is usable, but improvements will help before mastering.',
-    example: clippingCount > 4
-      ? 'This file may have compression artifacts, noise, or limited frequency range.'
-      : 'This file is usable but may have some compression or balance limits.',
+    rating: clippingCount > 4 || extremeBalance ? 'Low Quality WAV' : 'Good Quality WAV',
+    sourceTypeGuess,
+    note: clippingCount > 4 ? 'Source has quality issues that should be fixed before mastering.' : 'Clean source with usable balance, but verify mastering readiness separately.',
     notMasteredYet: false
   };
 }
 
-function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
+function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
   const hearing: string[] = [];
   const why: string[] = [];
   const next: string[] = [];
@@ -453,6 +491,10 @@ function buildPlainEnglishSummary(result: AnalysisResult): { hearing: string[]; 
   const peak = result.peakDb;
   const clippingCount = result.clippingCount ?? 0;
   const isMono = channels === 1;
+  if (sourceQuality) {
+    hearing.push(`Source quality looks like: ${sourceQuality.rating}.`);
+    why.push(sourceQuality.note);
+  }
 
   if (typeof lufs === 'number' && lufs < -16) {
     hearing.push('The track sounds quiet compared with most modern releases.');
@@ -625,8 +667,9 @@ export default function App() {
     sectionResult.highPercent && result.highPercent && sectionResult.highPercent < result.highPercent ? 'This section has reduced clarity / high-end energy.' : 'High-end clarity is similar or higher than full track.'
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
-  const plainEnglishSummary = result ? buildPlainEnglishSummary(result) : null;
-  const autoFixPlan = result ? buildAutoFixPlan(result) : null;
+  const sourceQuality = useMemo(() => assessSourceQuality(result, fileName), [result, fileName]);
+  const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality) : null;
+  const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality) : null;
 
   const listeningCoach = autoFixPlan ? {
     quickSummary: autoFixPlan.wrong.slice(0, 3),
@@ -680,7 +723,6 @@ export default function App() {
     };
   }, [result, listeningCoachingModeEnabled]);
   const soundProfile = buildSoundProfile(result);
-  const sourceQuality = useMemo(() => assessSourceQuality(result, fileName), [result, fileName]);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result);
@@ -763,6 +805,7 @@ export default function App() {
 
 
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
+  <section className="sound-profile-card"><h2>Source Quality</h2><p><strong>Source Quality rating:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
@@ -780,7 +823,7 @@ export default function App() {
   </section> : null}
 
   {isCreatorMode ? <section className="metrics-grid">
-    <div className="metric"><span>Source Quality</span><strong><span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></strong></div><div className="metric"><span>Release Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div><div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div><div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div><div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance (rough)</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div><div className="metric span-2"><span>Source quality note</span><strong>{sourceQuality?.note ?? 'Run analysis to classify source quality.'}</strong></div><div className="metric span-2"><span>Source quality example</span><strong>{sourceQuality?.example ?? 'Run analysis to see plain-English source quality guidance.'}</strong></div>
+    <div className="metric"><span>Source Quality</span><strong><span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></strong></div><div className="metric"><span>Release Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div><div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div><div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div><div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance (rough)</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div><div className="metric span-2"><span>Source type guess</span><strong>{sourceQuality?.sourceTypeGuess ?? 'Run analysis to classify source type.'}</strong></div><div className="metric span-2"><span>Source quality note</span><strong>{sourceQuality?.note ?? 'Run analysis to classify source quality.'}</strong></div>
   </section> : null}
 
   {isCreatorMode ? <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section> : null}
@@ -792,7 +835,7 @@ export default function App() {
 
   <section className="guidance"><h2>Fix Your Track — Step by Step</h2>{result ? <><p className="empty">Your Listening Coach recommends this order so each move helps the next one.</p><ol><li>{((result.clippingCount ?? 0) > 0 || (typeof result.peakDb === 'number' && result.peakDb >= -1)) ? 'Fix peaks first before chasing loudness.' : 'Fix clipping and peaks first so your loudest moments stay clean.'}</li><li>Then adjust loudness in small moves so it feels competitive without sounding crushed.</li><li>Then rebalance low-end or high-end only if the tone still feels off.</li><li>Then re-check against a reference track and confirm it translates well.</li></ol></> : <p className="empty">Run analysis to get your Listening Coach step-by-step repair order.</p>}</section>
 
-  <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What to listen for</h3><ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul><h3>5) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>6) Release readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>You don’t need to get it perfect.</p><p>If it sounds better than before, you’re improving.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
+  <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What to listen for</h3><ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul><h3>5) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>6) Source quality</h3><ul>{autoFixPlan.sourceQuality.map((item) => <li key={`source-${item}`}>{item}</li>)}</ul><h3>7) Release Readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>You don’t need to get it perfect.</p><p>If it sounds better than before, you’re improving.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section>
 
   {isCreatorMode ? <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section> : null}
 
