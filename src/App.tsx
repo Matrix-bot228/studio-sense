@@ -88,7 +88,9 @@ type SourceContext = {
   isVocalStem: boolean;
   isInstrumentStem: boolean;
   isLikelyStem: boolean;
+  isStemKeywordWav: boolean;
   archivalSignalCount: number;
+  poorSpectralIndicators: number;
 };
 
 function getSourceContext(result: AnalysisResult, fileName: string): SourceContext {
@@ -97,7 +99,7 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
   const isWav = extension === 'wav' || extension === 'wave';
   const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
   const isMono = (result.channels ?? 0) === 1;
-  const isStemName = /(acappella|vocal|vox|stem|multitrack|closemic|di|raw|saxophone|drums|bass|guitar|piano|overhead|room)/i.test(normalizedName);
+  const isStemName = /(acappella|vocal|vox|stem|multitrack|closemic|mic|di|raw|saxophone|drums|bass|guitar|piano|overhead|room)/i.test(normalizedName);
   const isVocalStem = /(acappella|vocal|vox)/i.test(normalizedName);
   const isInstrumentStem = /(saxophone|drums|bass|guitar|piano|overhead|room|di|closemic)/i.test(normalizedName);
   const low = result.lowPercent;
@@ -109,14 +111,18 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
   const cassetteLikeBalance = (typeof low === 'number' && low > 55) || (typeof low === 'number' && low < 10);
   const noisyHighs = typeof high === 'number' && high > 45;
   const compressedArchival = isCompressed && archivalName;
-  const archivalSignalCount = [archivalName, weakRms, unstablePeaks, severeRolloff, cassetteLikeBalance, noisyHighs, compressedArchival].filter(Boolean).length;
-  return { isWav, isCompressed, isMono, isStemName, isVocalStem, isInstrumentStem, isLikelyStem: isWav && isStemName, archivalSignalCount };
+  const poorSpectralIndicators = [severeRolloff, cassetteLikeBalance, noisyHighs].filter(Boolean).length;
+  const archivalSignalCount = [archivalName, isMono, weakRms, unstablePeaks, severeRolloff, cassetteLikeBalance, noisyHighs, compressedArchival].filter(Boolean).length;
+  return { isWav, isCompressed, isMono, isStemName, isVocalStem, isInstrumentStem, isLikelyStem: isWav && isStemName, isStemKeywordWav: isWav && isStemName, archivalSignalCount, poorSpectralIndicators };
 }
 
 
 function buildSoundProfile(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
   const context = getSourceContext(result, fileName);
+  const cleanMonoStem = context.isMono && context.isWav && (result.clippingCount ?? 0) === 0 && context.poorSpectralIndicators < 2;
+  if (context.isStemKeywordWav) return 'Raw studio stem / multitrack source';
+  if (cleanMonoStem) return 'Mono studio stem';
   if (context.isVocalStem) return 'Raw vocal stem';
   if (context.isInstrumentStem || context.isLikelyStem) return 'Raw instrument stem';
   if (context.isMono && context.isWav) return 'Mono studio source';
@@ -131,7 +137,7 @@ function buildSoundProfile(result: AnalysisResult | null, fileName: string): str
   if (typeof result.rmsDb === 'number' && result.rmsDb < -20) issues.push('weak');
   if ((result.channels ?? 0) === 1) issues.push('mono');
   if (typeof result.lowPercent === 'number' && result.lowPercent < 15) issues.push('thin');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && (result.channels ?? 0) === 1) issues.push('low-fidelity');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && (result.channels ?? 0) === 1 && !cleanMonoStem) issues.push('low-fidelity');
 
   if (!issues.length) return 'Clean and balanced recording';
 
@@ -144,12 +150,16 @@ function buildSoundProfile(result: AnalysisResult | null, fileName: string): str
 function buildWhyItSoundsThisWay(result: AnalysisResult | null): string[] {
   if (!result) return ['Run analysis to explain the current sound character.'];
   const reasons: string[] = [];
+  const cleanMonoStem = (result.channels ?? 0) === 1
+    && (result.clippingCount ?? 0) === 0
+    && (typeof result.highPercent !== 'number' || result.highPercent >= 8)
+    && (typeof result.lowPercent !== 'number' || (result.lowPercent >= 10 && result.lowPercent <= 55));
   const lufs = result.lufs ?? result.lufsEstimate;
   if (typeof lufs === 'number' && lufs < -20) reasons.push('Low volume makes the audio sound distant.');
   if (typeof result.rmsDb === 'number' && result.rmsDb < -20) reasons.push('Weak signal reduces presence and clarity.');
   if ((result.channels ?? 0) === 1) reasons.push('Mono removes stereo width and depth.');
   if (typeof result.lowPercent === 'number' && result.lowPercent < 15) reasons.push('Lack of low frequencies makes it sound thin.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -21) reasons.push('Background noise or compression reduces overall quality.');
+  if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && !cleanMonoStem) reasons.push('Background noise or compression reduces overall quality.');
   if (!reasons.length) return ['Loudness, tone balance, and stereo depth are in healthy ranges.'];
   return reasons.slice(0, 3);
 }
@@ -180,23 +190,23 @@ function detectAudioType(result: AnalysisResult | null, fileName: string): strin
   const safePeaks = typeof result.peakDb === 'number' && result.peakDb <= -1;
   const cleanSampleRate = sampleRate === 44100 || sampleRate === 48000;
 
-  if (context.isVocalStem) {
-    return 'Raw vocal stem — This appears to be an isolated vocal stem intended for mixing. Isolated stems are often quiet and mono by design.';
+  if (context.isStemKeywordWav || context.isVocalStem) {
+    return 'Raw studio stem / multitrack source — This is likely a raw stem, not a finished master.';
   }
 
   if (context.isLikelyStem) {
-    return 'Raw instrument stem — This source appears to be a raw isolated track rather than a finished master. Isolated stems are often quiet and mono by design.';
+    return 'Raw instrument stem — This source appears to be a raw isolated track rather than a finished master.';
   }
 
-  if (context.isWav && channels === 1 && clippingCount === 0 && safePeaks) {
-    return 'Mono studio source — This appears to be a clean mono studio source. Mono is normal for isolated mics and stems.';
+  if (context.isWav && channels === 1 && clippingCount === 0 && safePeaks && context.poorSpectralIndicators < 2) {
+    return 'Mono studio stem — Not release-ready by itself, but usable in a mix.';
   }
 
   if (context.isWav && cleanSampleRate && clippingCount === 0 && safePeaks && context.archivalSignalCount < 4) {
     return 'Finished stereo master / modern digital source';
   }
 
-  if (context.archivalSignalCount >= 4) {
+  if (context.isMono && lowRms && context.poorSpectralIndicators >= 2 && context.archivalSignalCount >= 5) {
     return 'Archival transfer / old tape source — Multiple indicators suggest analog age or transfer limitations.';
   }
 
