@@ -80,9 +80,49 @@ type WorkerRequest =
   | { type: 'analyze'; payload: WorkerAudioData }
   | { type: 'analyzeSection'; payload: WorkerAudioData & { startSec: number; endSec: number } };
 
+type SourceContext = {
+  isWav: boolean;
+  isCompressed: boolean;
+  isMono: boolean;
+  isStemName: boolean;
+  isVocalStem: boolean;
+  isInstrumentStem: boolean;
+  isLikelyStem: boolean;
+  archivalSignalCount: number;
+};
 
-function buildSoundProfile(result: AnalysisResult | null): string {
+function getSourceContext(result: AnalysisResult, fileName: string): SourceContext {
+  const normalizedName = fileName.toLowerCase();
+  const extension = normalizedName.split('.').pop() ?? '';
+  const isWav = extension === 'wav' || extension === 'wave';
+  const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
+  const isMono = (result.channels ?? 0) === 1;
+  const isStemName = /(acappella|vocal|vox|stem|multitrack|closemic|di|raw|saxophone|drums|bass|guitar|piano|overhead|room)/i.test(normalizedName);
+  const isVocalStem = /(acappella|vocal|vox)/i.test(normalizedName);
+  const isInstrumentStem = /(saxophone|drums|bass|guitar|piano|overhead|room|di|closemic)/i.test(normalizedName);
+  const low = result.lowPercent;
+  const high = result.highPercent;
+  const archivalName = /(tape|cassette|transfer|copy|dub|archive|archival|old|phone)/i.test(normalizedName);
+  const weakRms = typeof result.rmsDb === 'number' && result.rmsDb < -22;
+  const unstablePeaks = (result.clippingCount ?? 0) > 6;
+  const severeRolloff = typeof high === 'number' && high < 8;
+  const cassetteLikeBalance = (typeof low === 'number' && low > 55) || (typeof low === 'number' && low < 10);
+  const noisyHighs = typeof high === 'number' && high > 45;
+  const compressedArchival = isCompressed && archivalName;
+  const archivalSignalCount = [archivalName, weakRms, unstablePeaks, severeRolloff, cassetteLikeBalance, noisyHighs, compressedArchival].filter(Boolean).length;
+  return { isWav, isCompressed, isMono, isStemName, isVocalStem, isInstrumentStem, isLikelyStem: isWav && isStemName, archivalSignalCount };
+}
+
+
+function buildSoundProfile(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
+  const context = getSourceContext(result, fileName);
+  if (context.isVocalStem) return 'Raw vocal stem';
+  if (context.isInstrumentStem || context.isLikelyStem) return 'Raw instrument stem';
+  if (context.isMono && context.isWav) return 'Mono studio source';
+  if (context.isCompressed) return 'Streaming compressed source';
+  if (context.archivalSignalCount >= 4) return 'Archival transfer';
+  if ((result.channels ?? 0) >= 2 && context.isWav) return 'Finished stereo master';
 
   const issues: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
@@ -129,59 +169,39 @@ function buildFixSuggestions(result: AnalysisResult | null): string[] {
 
 function detectAudioType(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
-  const normalizedName = fileName.toLowerCase();
-  const extension = normalizedName.split('.').pop() ?? '';
-  const isWav = extension === 'wav' || extension === 'wave';
-  const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
+  const context = getSourceContext(result, fileName);
   const channels = result.channels ?? 0;
   const rms = result.rmsDb;
   const clippingCount = result.clippingCount ?? 0;
   const sampleRate = result.sampleRate ?? 0;
-  const low = result.lowPercent;
-  const high = result.highPercent;
-
-  const studioStemPattern = /(saxophone|vocal|acappella|guitar|bass|drums|overhead|closemic|room|stem|raw|multitrack|mic|kick|snare|piano)/i;
-  const archivalPattern = /(tape|cassette|old|phone|recording|copy|transfer)/i;
 
   const lowRms = typeof rms === 'number' && rms < -22;
   const weakRms = typeof rms === 'number' && rms < -20;
   const safePeaks = typeof result.peakDb === 'number' && result.peakDb <= -1;
-  const extremeImbalance = (typeof low === 'number' && typeof high === 'number') && (low < 10 || high < 8 || low > 58 || high > 50);
-  const hissIndicators = (typeof high === 'number' && high > 45) || (typeof low === 'number' && low < 10);
+  const cleanSampleRate = sampleRate === 44100 || sampleRate === 48000;
 
-  if (isWav && studioStemPattern.test(normalizedName)) {
-    return 'Raw studio stem / multitrack source — This looks like an isolated studio track. It may be quiet or mono because it is meant to be mixed, not released by itself. Source quality may be good, but this is not a finished master.';
+  if (context.isVocalStem) {
+    return 'Raw vocal stem — This appears to be an isolated vocal stem intended for mixing. Isolated stems are often quiet and mono by design.';
   }
 
-  if (isWav && channels === 1 && clippingCount === 0 && safePeaks) {
-    return 'Mono studio stem — This appears to be a clean mono studio source. Mono is normal for individual microphones or isolated instruments. Source quality may be good, but this is not a finished master.';
+  if (context.isLikelyStem) {
+    return 'Raw instrument stem — This source appears to be a raw isolated track rather than a finished master. Isolated stems are often quiet and mono by design.';
   }
 
-  if (isWav && (sampleRate === 44100 || sampleRate === 48000) && clippingCount === 0) {
-    return 'Modern digital recording';
+  if (context.isWav && channels === 1 && clippingCount === 0 && safePeaks) {
+    return 'Mono studio source — This appears to be a clean mono studio source. Mono is normal for isolated mics and stems.';
   }
 
-  const oldSignalCount = [
-    isCompressed && archivalPattern.test(normalizedName),
-    lowRms,
-    channels === 1,
-    extremeImbalance,
-    hissIndicators,
-    archivalPattern.test(normalizedName)
-  ].filter(Boolean).length;
-
-  if (oldSignalCount >= 3) {
-    if (archivalPattern.test(normalizedName)) {
-      return 'Old tape / archival transfer — This appears to have analog age, weak signal, or transfer limitations.';
-    }
-    return 'Phone or low-fidelity capture — This appears to have analog age, weak signal, or transfer limitations.';
+  if (context.isWav && cleanSampleRate && clippingCount === 0 && safePeaks && context.archivalSignalCount < 4) {
+    return 'Finished stereo master / modern digital source';
   }
 
-  if (isCompressed && (weakRms || clippingCount > 0 || extremeImbalance)) {
-    return 'Streaming/YouTube compressed audio';
+  if (context.archivalSignalCount >= 4) {
+    return 'Archival transfer / old tape source — Multiple indicators suggest analog age or transfer limitations.';
   }
 
-  if (channels >= 2 && typeof rms === 'number' && rms > -19) return 'Modern digital recording';
+  if (context.isCompressed && (weakRms || clippingCount > 0 || lowRms)) return 'Streaming compressed source';
+  if (channels >= 2 && typeof rms === 'number' && rms > -19) return 'Finished stereo master / modern digital source';
   return 'Modern digital recording';
 }
 
@@ -440,9 +460,9 @@ function isExtremeBalance(low?: number | null, mid?: number | null, high?: numbe
 
 function assessSourceQuality(result: AnalysisResult | null, fileName: string): SourceQualityAssessment | null {
   if (!result) return null;
-  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-  const isWav = extension === 'wav' || extension === 'wave';
-  const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
+  const context = getSourceContext(result, fileName);
+  const isWav = context.isWav;
+  const isCompressed = context.isCompressed;
   const channels = result.channels ?? 0;
   const stereo = channels >= 2;
   const clippingCount = result.clippingCount ?? 0;
@@ -456,6 +476,7 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
   const boomyLowEnd = typeof result.lowPercent === 'number' && result.lowPercent > 46;
   const strongSignal = typeof result.rmsDb === 'number' && result.rmsDb > -16;
   const balancedTone = !extremeBalance && !mutedHighs && !boomyLowEnd;
+  const stemContext = context.isLikelyStem || context.isVocalStem || context.isInstrumentStem;
   const releaseReadyScore = (result.score ?? 0) >= 85 && (result.readiness === 'Release Ready' || (lufs !== null && typeof lufs === 'number' && lufs >= -14.5));
   const sourceTypeGuess = `${isWav ? 'WAV' : isCompressed ? 'MP3/compressed' : 'Unknown'}${typeof result.sampleRate === 'number' ? `, ${result.sampleRate} Hz` : ''}${channels ? `, ${channels === 1 ? 'mono' : 'stereo'}` : ''}`;
 
@@ -481,13 +502,13 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
     };
   }
 
-  if (isWav && (clippingCount > 0 || (channels === 1 && !lowLoudness) || boomyLowEnd || weakSignal || extremeBalance)) {
+  if (isWav && (clippingCount > 0 || ((channels === 1 && !lowLoudness) && !stemContext) || boomyLowEnd || (!stemContext && weakSignal) || extremeBalance)) {
     return {
       rating: clippingCount > 2 || weakSignal ? 'Low Fidelity Source' : 'Good Production Source',
       confidence: 78,
       masteringReadiness: clippingCount > 2 ? 'Not Recommended' : 'Needs Work',
       sourceTypeGuess,
-      note: 'This is a WAV file, but the audio itself still has quality issues.',
+      note: stemContext ? 'This source appears to be a raw isolated track rather than a finished master.' : 'This is a WAV file, but the audio itself still has quality issues.',
       notMasteredYet: lowLoudness && clippingCount === 0 && safeHeadroom
     };
   }
@@ -789,7 +810,7 @@ export default function App() {
       ]
     };
   }, [result, listeningCoachingModeEnabled]);
-  const soundProfile = buildSoundProfile(result);
+  const soundProfile = buildSoundProfile(result, fileName);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result, fileName);
