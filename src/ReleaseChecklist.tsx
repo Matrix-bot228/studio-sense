@@ -18,6 +18,7 @@ type ChecklistItem = {
 type ReleaseChecklistProps = {
   result: AnalysisResult | null;
   autoMarkerCount: number;
+  frequencyIssueLabel?: string | null;
 };
 
 function itemDisplay(status: ChecklistStatus): { icon: ReactNode; className: string } {
@@ -26,7 +27,7 @@ function itemDisplay(status: ChecklistStatus): { icon: ReactNode; className: str
   return { icon: '❌', className: 'fail' };
 }
 
-export default function ReleaseChecklist({ result, autoMarkerCount }: ReleaseChecklistProps) {
+export default function ReleaseChecklist({ result, autoMarkerCount, frequencyIssueLabel = null }: ReleaseChecklistProps) {
   if (!result) {
     return (
       <section className="release-checklist">
@@ -52,6 +53,8 @@ export default function ReleaseChecklist({ result, autoMarkerCount }: ReleaseChe
 
   const issueStatus: ChecklistStatus = autoMarkerCount <= 2 ? 'pass' : 'fail';
 
+  const frequencyStatus: ChecklistStatus = frequencyIssueLabel ? 'warning' : 'pass';
+
   const items: ChecklistItem[] = [
     {
       label: 'Loudness OK',
@@ -76,6 +79,11 @@ export default function ReleaseChecklist({ result, autoMarkerCount }: ReleaseChe
     {
       label: 'No major issues',
       status: issueStatus
+    },
+    {
+      label: 'Frequency feel check',
+      status: frequencyStatus,
+      explanation: frequencyIssueLabel ? `Main issue detected: ${frequencyIssueLabel}. Fix this before final loudness push.` : undefined
     }
   ];
 

@@ -692,7 +692,7 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     next.push(frequencyIssue.firstSafeFix);
   }
 
-  const healthy = hearing.length === 0;
+  const healthy = hearing.length === 0 && !frequencyIssue;
   if (healthy) {
     hearing.push('The track already sounds balanced and competitive for release.');
     why.push('Loudness, peak headroom, stereo format, and tonal balance are within healthy ranges.');
@@ -962,7 +962,7 @@ export default function App() {
         id: `freq-${frequencyFeel.markerLabel}`,
         label: frequencyFeel.markerLabel,
         timeSec: 0,
-        color: 'yellow' as const,
+        color: (frequencyFeel.range === '20–60 Hz' || frequencyFeel.range === '80–150 Hz' || frequencyFeel.range === '300–800 Hz' || frequencyFeel.range === '2k–5k') ? 'red' as const : 'yellow' as const,
         explanation: `${frequencyFeel.mainIssue}. ${frequencyFeel.firstSafeFix}`,
         estimated: true,
         kind: 'estimated' as const
@@ -1001,7 +1001,7 @@ export default function App() {
     audioUrl={audioUrl}
     startSec={startSec}
     endSec={endSec}
-    timelineMarkers={autoMarkers}
+    timelineMarkers={combinedProblemMarkers}
     seekToSec={seekToSec}
     onSeekHandled={() => setSeekToSec(null)}
     onTimeChange={setCurrentTime}
@@ -1036,7 +1036,11 @@ export default function App() {
 
   {isCreatorMode ? <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section> : null}
 
-  <ReleaseChecklist result={result} autoMarkerCount={combinedProblemMarkers.length} />
+  <ReleaseChecklist
+    result={result}
+    autoMarkerCount={combinedProblemMarkers.length}
+    frequencyIssueLabel={frequencyFeel ? `${frequencyFeel.range} ${frequencyFeel.range === '8k–12k' ? 'too weak' : 'too strong'}` : null}
+  />
 
 
   {isBeginnerMode ? <section className="guidance priority-fix"><h2>🎧 Listening Coach — What to Fix First</h2>{priorityFix ? <><h3>{priorityFix.title}</h3><p>{priorityFix.message}</p></> : <p className="empty">Run analysis to see your highest-priority fix.</p>}</section> : null}<section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you're hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
