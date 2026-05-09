@@ -244,6 +244,15 @@ type ListeningCoachingMode = {
 };
 
 type AppMode = 'beginner' | 'creator';
+type FrequencyBandStatus = 'green' | 'yellow' | 'red';
+type FrequencyBandRow = { label: string; range: string; energy: number; status: FrequencyBandStatus; humanWording: string };
+
+function clampPercent(value: number): number { return Math.max(0, Math.min(100, value)); }
+function bandStatus(value: number, yellowAt: number, redAt: number): FrequencyBandStatus {
+  if (value >= redAt) return 'red';
+  if (value >= yellowAt) return 'yellow';
+  return 'green';
+}
 
 
 type PriorityFix = {
@@ -827,6 +836,32 @@ export default function App() {
       ]
     };
   }, [result, listeningCoachingModeEnabled]);
+
+  const frequencyBands: FrequencyBandRow[] = useMemo(() => {
+    if (!result) return [];
+    const low = result.lowPercent ?? 0;
+    const mid = result.midPercent ?? 0;
+    const high = result.highPercent ?? 0;
+    const subBass = clampPercent(low * 0.52);
+    const bass = clampPercent(low * 0.48 + mid * 0.08);
+    const lowMids = clampPercent(mid * 0.62 + low * 0.14);
+    const presence = clampPercent(mid * 0.2 + high * 0.5);
+    const air = clampPercent(high * 0.42);
+    return [
+      { label: 'Sub Bass', range: '20–60 Hz', energy: subBass, status: bandStatus(subBass, 24, 34), humanWording: 'Rumble / sub overload' },
+      { label: 'Bass', range: '60–150 Hz', energy: bass, status: bandStatus(bass, 22, 32), humanWording: 'Speaker strain / muddy warmth' },
+      { label: 'Low mids', range: '150–500 Hz', energy: lowMids, status: bandStatus(lowMids, 30, 42), humanWording: 'Boxy mids / trapped sound' },
+      { label: 'Presence', range: '2k–5k', energy: presence, status: bandStatus(presence, 30, 42), humanWording: 'Harsh / ear fatigue' },
+      { label: 'Air', range: '8k–12k', energy: air, status: air < 14 ? 'red' : air < 20 ? 'yellow' : 'green', humanWording: air < 18 ? 'Missing sparkle' : 'Bright / airy' }
+    ];
+  }, [result]);
+  const frequencyBalanceSummary = useMemo(() => {
+    if (!result) return 'Run analysis to view your frequency heatmap and listening translation.';
+    const bassBand = frequencyBands.find((band) => band.label === 'Bass');
+    const subBassBand = frequencyBands.find((band) => band.label === 'Sub Bass');
+    if ((bassBand && bassBand.status !== 'green') || (subBassBand && subBassBand.status === 'red')) return 'The bass energy is dominating the mix and may cause speaker vibration or muddy playback.';
+    return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
+  }, [frequencyBands, result]);
   const soundProfile = buildSoundProfile(result, fileName);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
@@ -915,6 +950,7 @@ export default function App() {
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
+  <section className="guidance frequency-balance"><h2>Frequency Balance</h2>{frequencyBands.length ? <><p>{frequencyBalanceSummary}</p><div className="frequency-grid">{frequencyBands.map((band) => <div key={band.label} className="frequency-row"><div className="frequency-row-head"><strong>{band.label} <span>({band.range})</span></strong><span className={`pill ${band.status === 'green' ? 'good' : band.status === 'yellow' ? 'warn' : 'bad'}`}>{band.energy.toFixed(0)}%</span></div><div className="frequency-meter" role="img" aria-label={`${band.label} energy ${band.energy.toFixed(0)} percent`}><div className={`frequency-fill ${band.status}`} style={{ width: `${band.energy}%` }} /></div><p>{band.humanWording}</p></div>)}</div></> : <p className="empty">Run analysis to see frequency distribution.</p>}</section>
 
 
   <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} balance={{ low: result?.lowPercent ?? 0, high: result?.highPercent ?? 0 }} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
