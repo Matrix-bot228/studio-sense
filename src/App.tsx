@@ -8,6 +8,16 @@ type SourceQualityCategory = 'Low Fidelity Source' | 'Standard Compressed Audio'
 type MasteringReadinessCategory = 'Release Ready' | 'Needs Work' | 'Not Mastered' | 'Not Recommended';
 type BadgeTone = 'good' | 'warn' | 'bad' | 'info';
 
+type FrequencyProblem = {
+  band: string;
+  range: string;
+  issue: string;
+  severity: 'Low' | 'Medium' | 'High';
+  description: string;
+  color: 'good' | 'warn' | 'bad';
+  suggestion: string;
+};
+
 type AnalysisResult = {
   lufs?: number | null;
   durationSec?: number | null;
@@ -27,6 +37,7 @@ type AnalysisResult = {
   balanceVerdict?: string;
   masteringSuggestion?: string;
   readiness?: ReadinessCategory;
+  frequencyProblems?: FrequencyProblem[];
 };
 type SourceQualityAssessment = {
   rating: SourceQualityCategory;
@@ -915,6 +926,27 @@ export default function App() {
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
+
+  <section className="guidance">
+    <h2>Frequency Problems</h2>
+    {result?.frequencyProblems?.length ? (
+      <ul className="frequency-problem-list">
+        {result.frequencyProblems.map((problem) => (
+          <li key={`${problem.band}-${problem.issue}`} className="frequency-problem-item">
+            <div className="timeline-title-row">
+              <span className={`pill ${problem.color}`}>{problem.severity}</span>
+              <strong>{problem.band} ({problem.range})</strong>
+            </div>
+            <p><strong>{problem.issue}:</strong> {problem.description}</p>
+            <p><strong>Mastering suggestion:</strong> {problem.suggestion}</p>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p className="empty">No major frequency problems detected. Nice spectral balance.</p>
+    )}
+  </section>
+
 
 
   <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} balance={{ low: result?.lowPercent ?? 0, high: result?.highPercent ?? 0 }} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>

@@ -2,6 +2,16 @@
 
 type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
 
+type FrequencyProblem = {
+  band: string;
+  range: string;
+  issue: string;
+  severity: 'Low' | 'Medium' | 'High';
+  description: string;
+  color: 'good' | 'warn' | 'bad';
+  suggestion: string;
+};
+
 type AnalysisResult = {
   durationSec?: number | null;
   sampleRate?: number | null;
@@ -20,6 +30,7 @@ type AnalysisResult = {
   balanceVerdict?: string;
   masteringSuggestion?: string;
   readiness?: ReadinessCategory;
+  frequencyProblems?: FrequencyProblem[];
 };
 
 type ProblemMarker = {
@@ -59,6 +70,17 @@ function buildProblemMarkers(result: AnalysisResult): ProblemMarker[] {
   ];
   const slots = [0.1, 0.3, 0.5, 0.7];
   return candidates.filter((c) => c.active).map((c, i) => ({ id: `auto-${i}`, timeSec: durationSec * slots[i], label: c.label, severity: 'high', explanation: 'Auto-generated from whole-track analysis.', color: c.color, estimated: true, kind: 'estimated' }));
+}
+
+
+function detectFrequencyProblems(low: number, mid: number, high: number): FrequencyProblem[] {
+  const problems: FrequencyProblem[] = [];
+  if (low > 50) problems.push({ band: '20–60 Hz', range: 'Sub bass', issue: 'Sub bass overload', severity: 'High', description: 'Too much deep rumble can eat headroom and make playback boomy on big speakers.', color: 'bad', suggestion: 'Use a gentle high-pass around 25–35 Hz and trim 1–3 dB in the sub area.' });
+  if (low > 40) problems.push({ band: '80–150 Hz', range: 'Bass body', issue: 'Speaker strain / muddy warmth', severity: low > 48 ? 'High' : 'Medium', description: 'This area is heavy, so bass may feel cloudy and small speakers can struggle.', color: low > 48 ? 'bad' : 'warn', suggestion: 'Cut a little around 100–140 Hz and tighten with light compression.' });
+  if (mid > 72) problems.push({ band: '200–400 Hz', range: 'Low mids', issue: 'Boxy mids', severity: mid > 80 ? 'High' : 'Medium', description: 'The mix may sound boxy or cardboard-like in vocals and instruments.', color: mid > 80 ? 'bad' : 'warn', suggestion: 'Try a narrow cut around 250–350 Hz and compare with a reference track.' });
+  if (high > 30) problems.push({ band: '2k–5k', range: 'Presence', issue: 'Ear fatigue', severity: high > 35 ? 'High' : 'Medium', description: 'Harsh presence can make the song tiring when listened to for long periods.', color: high > 35 ? 'bad' : 'warn', suggestion: 'Reduce 2–5 kHz slightly or use dynamic EQ to tame harsh peaks only when needed.' });
+  if (high < 10) problems.push({ band: '8k–12k', range: 'Air', issue: 'Missing sparkle', severity: high < 7 ? 'Medium' : 'Low', description: 'Top-end air is limited, so the mix can feel dull or muted.', color: high < 7 ? 'warn' : 'good', suggestion: 'Add a gentle high shelf near 10 kHz and stop once clarity returns.' });
+  return problems;
 }
 
 function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec: number, endSec: number): AnalysisResult {
@@ -138,7 +160,8 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   let masteringSuggestion = 'Minor polish only. Keep headroom and compare against references.';
   if (readiness === 'Needs Work') masteringSuggestion = 'Adjust gain staging and EQ balance, then re-check loudness and peaks.';
   if (readiness === 'Problem Area') masteringSuggestion = 'Reduce limiting, fix clipping/ceiling, and rebalance tone before release.';
-  return { durationSec: endSec - startSec || duration, sampleRate, channels: numberOfChannels, peakDb, rmsDb, clippingCount, lowPercent, midPercent, highPercent, lufsEstimate, score, loudnessVerdict, peakSafetyVerdict, clippingVerdict, balanceVerdict: getBalanceVerdict(lowPercent, midPercent, highPercent), masteringSuggestion, readiness };
+  const frequencyProblems = detectFrequencyProblems(lowPercent, midPercent, highPercent);
+  return { durationSec: endSec - startSec || duration, sampleRate, channels: numberOfChannels, peakDb, rmsDb, clippingCount, lowPercent, midPercent, highPercent, lufsEstimate, score, loudnessVerdict, peakSafetyVerdict, clippingVerdict, balanceVerdict: getBalanceVerdict(lowPercent, midPercent, highPercent), masteringSuggestion, readiness, frequencyProblems };
 }
 
 self.onmessage = (event: MessageEvent) => {
