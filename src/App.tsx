@@ -128,63 +128,76 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
 function buildSoundProfile(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
   const context = getSourceContext(result, fileName);
-  const cleanMonoStem = context.isMono && context.isWav && (result.clippingCount ?? 0) === 0 && context.poorSpectralIndicators < 2;
+  const lufs = result.lufs ?? result.lufsEstimate;
+  const low = result.lowPercent;
+  const high = result.highPercent;
+  const clipping = result.clippingCount ?? 0;
+
+  if (clipping === 0 && typeof lufs === 'number' && lufs < -16 && typeof low === 'number' && low > 60) {
+    return 'Clean digital file, but too quiet with low-end buildup';
+  }
   if (context.isStemKeywordWav) return 'Raw studio stem / multitrack source';
-  if (cleanMonoStem) return 'Mono studio stem';
-  if (context.isVocalStem) return 'Raw vocal stem';
-  if (context.isInstrumentStem || context.isLikelyStem) return 'Raw instrument stem';
   if (context.isMono && context.isWav) return 'Mono studio source';
   if (context.isCompressed) return 'Streaming compressed source';
   if (context.archivalSignalCount >= 4) return 'Archival transfer';
-  if ((result.channels ?? 0) >= 2 && context.isWav) return 'Finished stereo master';
 
-  const issues: string[] = [];
-  const lufs = result.lufs ?? result.lufsEstimate;
+  const profileNotes: string[] = [];
+  if (clipping > 0) profileNotes.push('clipping present');
+  if (typeof lufs === 'number' && lufs < -16) profileNotes.push('too quiet');
+  if (typeof low === 'number' && low > 60) profileNotes.push('low-end heavy');
+  if (typeof high === 'number' && high < 5) profileNotes.push('muted highs');
 
-  if (typeof lufs === 'number' && lufs < -20) issues.push('quiet');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) issues.push('weak');
-  if ((result.channels ?? 0) === 1) issues.push('mono');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) issues.push('thin');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && (result.channels ?? 0) === 1 && !cleanMonoStem) issues.push('low-fidelity');
-
-  const heavyLowEnd = typeof result.lowPercent === 'number' && result.lowPercent > 44;
-  if (!issues.length && !heavyLowEnd) return 'Clean and balanced recording';
-  if (heavyLowEnd) issues.push('heavy low-end');
-
-  const uniqueIssues = [...new Set(issues)];
-  const descriptors = uniqueIssues.join(', ');
-  const thinTail = uniqueIssues.includes('thin') ? ' with thin sound' : '';
-  return `${descriptors} recording${thinTail}`.replace('thin recording with thin sound', 'recording with thin sound');
+  if (!profileNotes.length) return 'Clean digital file with mostly balanced tone';
+  return `Clean digital file with ${profileNotes.join(', ')}`;
 }
 
 function buildWhyItSoundsThisWay(result: AnalysisResult | null): string[] {
   if (!result) return ['Run analysis to explain the current sound character.'];
   const reasons: string[] = [];
-  const cleanMonoStem = (result.channels ?? 0) === 1
-    && (result.clippingCount ?? 0) === 0
-    && (typeof result.highPercent !== 'number' || result.highPercent >= 8)
-    && (typeof result.lowPercent !== 'number' || (result.lowPercent >= 10 && result.lowPercent <= 55));
   const lufs = result.lufs ?? result.lufsEstimate;
-  if (typeof lufs === 'number' && lufs < -20) reasons.push('Low volume makes the audio sound distant.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) reasons.push('Weak signal reduces presence and clarity.');
-  if ((result.channels ?? 0) === 1) reasons.push('Mono removes stereo width and depth.');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) reasons.push('Lack of low frequencies makes it sound thin.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && !cleanMonoStem) reasons.push('Background noise or compression reduces overall quality.');
-  if (!reasons.length) return ['Loudness, tone balance, and stereo depth are in healthy ranges.'];
-  return reasons.slice(0, 3);
+  const low = result.lowPercent;
+  const high = result.highPercent;
+  const clipping = result.clippingCount ?? 0;
+  const peakDb = result.peakDb;
+
+  if (clipping === 0) reasons.push('No clipping was detected');
+  if (typeof peakDb === 'number' && peakDb < SAFE_PEAK_DBFS) reasons.push('peak headroom is safe');
+  if (typeof lufs === 'number' && lufs < -16) reasons.push('the track is too quiet for release');
+  if (typeof low === 'number' && low > 60) reasons.push('the low-end is dominating the balance');
+  if (typeof high === 'number' && high < 5) reasons.push('highs are muted and missing sparkle');
+
+  if (reasons.length >= 4 && clipping === 0 && typeof peakDb === 'number' && peakDb < SAFE_PEAK_DBFS) {
+    return ['No clipping was detected and peak headroom is safe, but the track is too quiet for release. The low-end is dominating the balance, which can make the song feel boomy or dull.'];
+  }
+
+  if (!reasons.length) return ['Analysis shows no major technical red flags yet.'];
+  return [reasons.join(', ') + '.'];
 }
 
 function buildFixSuggestions(result: AnalysisResult | null): string[] {
   if (!result) return [];
   const fixes: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
-  if (typeof lufs === 'number' && lufs < -20) fixes.push('Turn the track up slowly, then check it still sounds clean.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -20) fixes.push('Normalize audio or re-record with stronger input');
-  if ((result.channels ?? 0) === 1) fixes.push('Apply stereo widening to restore space');
-  if (typeof result.lowPercent === 'number' && result.lowPercent < 15) fixes.push('Add a little warmth if the track feels thin, but keep it subtle.');
-  if (typeof result.rmsDb === 'number' && result.rmsDb < -21) fixes.push('Apply noise reduction or denoise filter');
-  fixes.push('If the track sounds muddy or cloudy, gently clean that area.');
+  const low = result.lowPercent;
+
+  if (typeof low === 'number' && low > 60 && typeof lufs === 'number' && lufs < -16) {
+    return ['First reduce muddy low-end, then add about 4–5 dB of gentle gain/limiting while keeping the final peak below -1 dBFS.'];
+  }
+  if (typeof low === 'number' && low > 60) fixes.push('Reduce muddy low-end first before pushing loudness.');
+  if (typeof lufs === 'number' && lufs < -16) fixes.push('Increase loudness gently toward release level while keeping peaks below -1 dBFS.');
+  if ((result.clippingCount ?? 0) > 0) fixes.push('Reduce limiting and remove clipping before final export.');
   return fixes;
+}
+
+
+function buildTopMasteringSuggestion(result: AnalysisResult | null): string {
+  if (!result) return 'Run analysis to get a mastering suggestion.';
+  const lufs = result.lufs ?? result.lufsEstimate;
+  const low = result.lowPercent;
+  if (typeof low === 'number' && low > 60 && typeof lufs === 'number' && lufs < -16) {
+    return 'Rebalance the low-end first, then increase loudness carefully before release.';
+  }
+  return result.masteringSuggestion ?? 'Use small tonal moves, then level-match before final print.';
 }
 
 function detectAudioType(result: AnalysisResult | null, fileName: string): string {
@@ -1014,6 +1027,7 @@ export default function App() {
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
+  <section className="guidance"><h2>🎛 Mastering suggestion</h2><p>{buildTopMasteringSuggestion(result)}</p></section>
   <section className="guidance frequency-balance"><h2>Frequency Balance</h2>{frequencyBands.length ? <><p>{frequencyBalanceSummary}</p><div className="frequency-grid">{frequencyBands.map((band) => <div key={band.label} className="frequency-row"><div className="frequency-row-head"><strong>{band.label} <span>({band.range})</span></strong><span className={`pill ${band.status === 'green' ? 'good' : band.status === 'yellow' ? 'warn' : 'bad'}`}>{band.energy.toFixed(0)}%</span></div><div className="frequency-meter" role="img" aria-label={`${band.label} energy ${band.energy.toFixed(0)} percent`}><div className={`frequency-fill ${band.status}`} style={{ width: `${band.energy}%` }} /></div><p>{band.humanWording}</p></div>)}</div></> : <p className="empty">Run analysis to see frequency distribution.</p>}</section>
   <section className="guidance"><h2>Frequency Feel</h2>{frequencyFeel ? <><p><strong>Main frequency issue:</strong> {frequencyFeel.range} {frequencyFeel.range === '8k–12k' ? 'too weak' : 'too strong'}</p><p><strong>What it feels like:</strong> {frequencyFeel.listenerFeeling}</p><p><strong>First safe fix:</strong> {frequencyFeel.firstSafeFix}</p><p><strong>What NOT to do:</strong> {frequencyFeel.avoid}</p></> : <p className="empty">No dominant frequency problem detected.</p>}</section>
 
