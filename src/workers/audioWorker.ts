@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 type ReadinessCategory = 'Release Ready' | 'Needs Work' | 'Problem Area';
+type ConfidenceLevel = 'High' | 'Medium' | 'Low';
 
 type AnalysisResult = {
   durationSec?: number | null;
@@ -12,6 +13,8 @@ type AnalysisResult = {
   lowPercent?: number | null;
   midPercent?: number | null;
   highPercent?: number | null;
+  bandPercents?: Record<string, number>;
+  confidence?: ConfidenceLevel;
   lufsEstimate?: number | null;
   score?: number | null;
   loudnessVerdict?: string;
@@ -38,20 +41,19 @@ const SAFE_PEAK_DBFS = -1;
 const LARGE_FILE_SAMPLES = 44_100 * 60 * 6;
 
 function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
-function confidenceText(label: string, score: number): string { return `${label} (${Math.round(clamp(score, 0, 1) * 100)}% confidence).`; }
 
 function computeBandPowers(magnitudes: Float32Array, sampleRate: number, fftSize: number) {
-  const bands = { sub: 0, bass: 0, lowMids: 0, mids: 0, highs: 0, air: 0 };
+  const bands = { sub: 0, bass: 0, lowMids: 0, mids: 0, presence: 0, air: 0 };
   for (let i = 1; i < magnitudes.length; i += 1) {
     const hz = (i * sampleRate) / fftSize;
     const p = magnitudes[i] ?? 0;
     if (hz < 20) continue;
     if (hz < 60) bands.sub += p;
-    else if (hz < 200) bands.bass += p;
-    else if (hz < 600) bands.lowMids += p;
+    else if (hz < 150) bands.bass += p;
+    else if (hz < 400) bands.lowMids += p;
     else if (hz < 2000) bands.mids += p;
-    else if (hz < 8000) bands.highs += p;
-    else bands.air += p;
+    else if (hz < 5000) bands.presence += p;
+    else if (hz >= 8000 && hz < 12000) bands.air += p;
   }
   return bands;
 }
@@ -79,17 +81,8 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   const sectionLen = Math.max(end - start, 1);
 
   let peak = 0; let rmsAccumulator = 0; let sampleCount = 0; let clippingCount = 0;
-  let sideEnergy = 0; let midEnergy = 0;
   const mono = new Float32Array(sectionLen);
-
   for (let i = 0; i < sectionLen; i += 1) {
-    const left = channelsData[0]?.[start + i] ?? 0;
-    const right = channelsData[1]?.[start + i] ?? left;
-    const midSample = (left + right) * 0.5;
-    const sideSample = (left - right) * 0.5;
-    midEnergy += midSample * midSample;
-    sideEnergy += sideSample * sideSample;
-
     for (let channel = 0; channel < numberOfChannels; channel += 1) {
       const sample = channelsData[channel]?.[start + i] ?? 0;
       const absSample = Math.abs(sample);
@@ -109,41 +102,54 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   const hop = 1024;
   const frameCount = Math.max(1, Math.floor((mono.length - fftSize) / hop) + 1);
 
-  let sumSub = 0; let sumBass = 0; let sumLowMids = 0; let sumMids = 0; let sumHighs = 0; let sumAir = 0;
+  let sumSub = 0; let sumBass = 0; let sumLowMids = 0; let sumMids = 0; let sumPresence = 0; let sumAir = 0;
   const lufsFrames: number[] = [];
   for (let f = 0; f < frameCount; f += 1) {
     const pos = Math.min(f * hop, Math.max(0, mono.length - fftSize));
     const mags = runDftWindowed(mono, fftSize, pos);
     const b = computeBandPowers(mags, sampleRate, fftSize);
-    sumSub += b.sub; sumBass += b.bass; sumLowMids += b.lowMids; sumMids += b.mids; sumHighs += b.highs; sumAir += b.air;
+    sumSub += b.sub; sumBass += b.bass; sumLowMids += b.lowMids; sumMids += b.mids; sumPresence += b.presence; sumAir += b.air;
     let frameEnergy = 0;
     for (let i = 0; i < fftSize; i += 1) { const s = mono[pos + i] ?? 0; frameEnergy += s * s; }
     const frameRms = Math.sqrt(frameEnergy / fftSize);
     lufsFrames.push(frameRms > 0 ? 20 * Math.log10(frameRms) - 0.7 : -120);
   }
 
-  const totalBand = Math.max(sumSub + sumBass + sumLowMids + sumMids + sumHighs + sumAir, Number.EPSILON);
-  const lowPercent = ((sumSub + sumBass + sumLowMids) / totalBand) * 100;
-  const midPercent = (sumMids / totalBand) * 100;
-  const highPercent = ((sumHighs + sumAir) / totalBand) * 100;
+  const totalBand = Math.max(sumSub + sumBass + sumLowMids + sumMids + sumPresence + sumAir, Number.EPSILON);
+  const bandPercents = {
+    sub: (sumSub / totalBand) * 100,
+    bass: (sumBass / totalBand) * 100,
+    lowMids: (sumLowMids / totalBand) * 100,
+    mids: (sumMids / totalBand) * 100,
+    presence: (sumPresence / totalBand) * 100,
+    air: (sumAir / totalBand) * 100
+  };
+  const lowPercent = bandPercents.sub + bandPercents.bass + bandPercents.lowMids;
+  const midPercent = bandPercents.mids + bandPercents.presence;
+  const highPercent = bandPercents.air;
 
-  const bassToMids = (sumSub + sumBass) / Math.max(sumMids, Number.EPSILON);
-  const highsToLowMids = (sumHighs + sumAir) / Math.max(sumLowMids, Number.EPSILON);
+  const bassMasking = bandPercents.bass > 22 && bandPercents.lowMids > 20;
+  const muddyMids = bandPercents.lowMids > 24;
+  const harshUpperMids = bandPercents.presence > 26;
+  const dullHighs = bandPercents.air < 8;
+  const thinMix = (bandPercents.sub + bandPercents.bass) < 16;
+  const lowHighImbalance = Math.abs(lowPercent - (midPercent + highPercent)) > 22;
+
   const dynSpread = Math.max(...lufsFrames) - Math.min(...lufsFrames);
+  const confidence: ConfidenceLevel = frameCount > 120 && sectionLen / sampleRate > 30 ? 'High' : frameCount > 24 ? 'Medium' : 'Low';
 
-  const profile = bassToMids > 1.3 ? 'Low-end heavy' : highsToLowMids > 1.4 ? 'Bright-leaning' : dynSpread > 9 ? 'Dynamic wide' : 'Balanced commercial';
-  const reason = `b/m=${bassToMids.toFixed(2)}, h/lm=${highsToLowMids.toFixed(2)}, dyn=${dynSpread.toFixed(1)}dB`;
-
-  let masteringSuggestion = `${profile} profile detected. `;
-  if (bassToMids > 1.35) masteringSuggestion += 'Low end dominates mids; trim bass or add mid clarity.';
-  else if (highsToLowMids > 1.45) masteringSuggestion += 'Top end outweighs body; soften highs or support low-mids.';
-  else if (dynSpread < 5 && lufsEstimate > -12) masteringSuggestion += 'Dense dynamics at loud level; reduce limiting for movement.';
-  else masteringSuggestion += 'Tonal proportions are stable; focus on taste-level refinements.';
+  const profile = harshUpperMids ? 'Harsh upper-mid mix' : bassMasking ? 'Warm but muddy' : dullHighs && thinMix ? 'Dark vintage tone' : dullHighs ? 'Bass-heavy modern master' : thinMix ? 'Bright and thin' : lowHighImbalance ? 'Bass-heavy modern master' : 'Clean balanced mix';
 
   const loudnessDelta = lufsEstimate - TARGET_LUFS;
-  let score = 100 - clamp(Math.abs(loudnessDelta) * 2.0, 0, 26) - clamp(Math.abs(bassToMids - 1) * 18, 0, 22) - clamp(Math.abs(highsToLowMids - 1) * 14, 0, 18) - clamp(Math.max(0, 5 - dynSpread) * 2, 0, 14);
-  score = clamp(score, 0, 100);
+  let suggestion = `${profile}. `;
+  if (bassMasking || muddyMids) suggestion += 'Use subtractive EQ in 120–350 Hz before adding loudness; avoid pushing limiter early.';
+  else if (dullHighs) suggestion += 'Try a gentle high shelf around 8–12 kHz and stop before cymbals or vocals get brittle.';
+  else if (harshUpperMids) suggestion += 'Control 2–5 kHz peaks with broad cuts or dynamic EQ before final limiting.';
+  else if (thinMix) suggestion += 'Rebuild low-end fundamentals first, then refine brightness with small high-shelf moves.';
+  else suggestion += 'Proceed with small level-matched EQ moves and conservative final limiting.';
 
+  let score = 100 - clamp(Math.abs(loudnessDelta) * 2.0, 0, 26) - clamp(Math.max(0, bandPercents.lowMids - 24) * 1.4, 0, 18) - clamp(Math.max(0, bandPercents.presence - 26) * 1.2, 0, 16) - clamp(Math.max(0, 8 - bandPercents.air) * 1.6, 0, 12) - clamp(Math.max(0, 5 - dynSpread) * 2, 0, 14);
+  score = clamp(score, 0, 100);
   const readiness: ReadinessCategory = score < 60 || clippingCount > 0 ? 'Problem Area' : score < 78 ? 'Needs Work' : 'Release Ready';
 
   const result: AnalysisResult = {
@@ -156,17 +162,19 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
     lowPercent,
     midPercent,
     highPercent,
+    bandPercents,
+    confidence,
     lufsEstimate,
     score,
-    loudnessVerdict: loudnessDelta > 1 ? `Running hot by ${loudnessDelta.toFixed(1)} dB.` : loudnessDelta < -1.2 ? `About ${Math.abs(loudnessDelta).toFixed(1)} dB under target.` : 'Loudness is close to target.',
-    peakSafetyVerdict: peakDb < SAFE_PEAK_DBFS ? 'Peak headroom is in a safe zone.' : `Peak exceeds safe ceiling by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB.`,
-    clippingVerdict: clippingCount > 0 ? `Clipping risk detected (${clippingCount} clipped samples).` : 'No clipping detected in sample data.',
-    balanceVerdict: confidenceText(`Relative balance ${profile.toLowerCase()}`, 0.68),
-    masteringSuggestion,
+    loudnessVerdict: loudnessDelta > 1 ? `Integrated loudness is ${loudnessDelta.toFixed(1)} dB above target.` : loudnessDelta < -1.2 ? `Integrated loudness is ${Math.abs(loudnessDelta).toFixed(1)} dB below target.` : 'Integrated loudness is close to target.',
+    peakSafetyVerdict: peakDb < SAFE_PEAK_DBFS ? 'Peak headroom is within a safe mastering zone.' : `Peak exceeds safe ceiling by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB.`,
+    clippingVerdict: clippingCount > 0 ? `Clipping detected (${clippingCount} clipped samples).` : 'No clipping detected in analyzed audio.',
+    balanceVerdict: `Spectrum profile: ${profile}. Confidence: ${confidence}.`,
+    masteringSuggestion: suggestion,
     readiness
   };
 
-  return { result, debug: { bandEnergy: { sub: sumSub, bass: sumBass, lowMids: sumLowMids, mids: sumMids, highs: sumHighs, air: sumAir }, ratios: { bassToMids, highsToLowMids }, loudness: { lufsEstimate, frameSpreadDb: dynSpread }, profileDecision: profile, finalReason: reason, frameCount } };
+  return { result, debug: { bandEnergy: { sub: sumSub, bass: sumBass, lowMids: sumLowMids, mids: sumMids, presence: sumPresence, air: sumAir }, bandPercents, detections: { bassMasking, muddyMids, harshUpperMids, dullHighs, thinMix, lowHighImbalance }, loudness: { lufsEstimate, frameSpreadDb: dynSpread }, profileDecision: profile, frameCount } };
 }
 
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
