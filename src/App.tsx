@@ -478,7 +478,8 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
     matters.push('The track may feel small and cold.');
     first.push('If the track feels thin, add a little bass warmth. Listen for more fullness. Stop before it turns boomy or muddy.');
   }
-  if (typeof low === 'number' && low > 44) {
+  const bassMaskingClarity = typeof low === 'number' && low > 44;
+  if (bassMaskingClarity) {
     wrong.push('There is too much low-end buildup.');
     matters.push('Boomy bass can hide vocals and detail.');
     first.push('Gently reduce muddy lows. Listen for clearer vocals and tighter bass. Stop when the mix feels balanced, not thin.');
@@ -669,7 +670,8 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     why.push('Low frequencies are under-represented compared with mids and highs.');
     next.push('Add a little warmth if the track feels thin, but keep it subtle.');
   }
-  if (typeof low === 'number' && low > 44) {
+  const bassMaskingClarity = typeof low === 'number' && low > 44;
+  if (bassMaskingClarity) {
     hearing.push('The bass feels heavy and can get boomy.');
     why.push('Too much spectral energy is concentrated in the low frequencies.');
     next.push('Reduce muddy low frequencies with subtractive EQ and tighten the low-end dynamics.');
@@ -909,9 +911,12 @@ export default function App() {
     if (!result) return 'Run analysis to view your frequency heatmap and listening translation.';
     const bassBand = frequencyBands.find((band) => band.label === 'Bass');
     const subBassBand = frequencyBands.find((band) => band.label === 'Sub Bass');
-    if ((bassBand && bassBand.status !== 'green') || (subBassBand && subBassBand.status === 'red')) return 'The bass energy is dominating the mix and may cause speaker vibration or muddy playback.';
+    if ((bassBand && bassBand.status !== 'green') || (subBassBand && subBassBand.status === 'red')) {
+      if (frequencyFeel) return `Low-end energy is elevated. Main issue: ${frequencyFeel.range} (${frequencyFeel.mainIssue}). Clean this before adding loudness.`;
+      return 'The bass energy is dominating the mix and may cause speaker vibration or muddy playback.';
+    }
     return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
-  }, [frequencyBands, result]);
+  }, [frequencyBands, frequencyFeel, result]);
   const soundProfile = buildSoundProfile(result, fileName);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
@@ -1010,7 +1015,7 @@ export default function App() {
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
   <section className="guidance frequency-balance"><h2>Frequency Balance</h2>{frequencyBands.length ? <><p>{frequencyBalanceSummary}</p><div className="frequency-grid">{frequencyBands.map((band) => <div key={band.label} className="frequency-row"><div className="frequency-row-head"><strong>{band.label} <span>({band.range})</span></strong><span className={`pill ${band.status === 'green' ? 'good' : band.status === 'yellow' ? 'warn' : 'bad'}`}>{band.energy.toFixed(0)}%</span></div><div className="frequency-meter" role="img" aria-label={`${band.label} energy ${band.energy.toFixed(0)} percent`}><div className={`frequency-fill ${band.status}`} style={{ width: `${band.energy}%` }} /></div><p>{band.humanWording}</p></div>)}</div></> : <p className="empty">Run analysis to see frequency distribution.</p>}</section>
-  <section className="guidance"><h2>Frequency Feel</h2>{frequencyFeel ? <><p><strong>Main frequency issue:</strong> {frequencyFeel.range} too strong</p><p><strong>What it feels like:</strong> {frequencyFeel.listenerFeeling}</p><p><strong>First safe fix:</strong> {frequencyFeel.firstSafeFix}</p><p><strong>What NOT to do:</strong> {frequencyFeel.avoid}</p></> : <p className="empty">No dominant frequency problem detected.</p>}</section>
+  <section className="guidance"><h2>Frequency Feel</h2>{frequencyFeel ? <><p><strong>Main frequency issue:</strong> {frequencyFeel.range} {frequencyFeel.range === '8k–12k' ? 'too weak' : 'too strong'}</p><p><strong>What it feels like:</strong> {frequencyFeel.listenerFeeling}</p><p><strong>First safe fix:</strong> {frequencyFeel.firstSafeFix}</p><p><strong>What NOT to do:</strong> {frequencyFeel.avoid}</p></> : <p className="empty">No dominant frequency problem detected.</p>}</section>
 
 
   <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} balance={{ low: result?.lowPercent ?? 0, high: result?.highPercent ?? 0 }} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
