@@ -555,6 +555,41 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
   };
 }
 
+
+
+type RecommendationTopic = 'clipping' | 'loudness' | 'monoStereo' | 'noise' | 'tonalBalance';
+const RECOMMENDATION_PRIORITY: RecommendationTopic[] = ['clipping', 'loudness', 'monoStereo', 'noise', 'tonalBalance'];
+
+function buildContextAwareRecommendations(result: AnalysisResult) {
+  const channels = result.channels ?? 0;
+  const isMono = channels === 1;
+  const lufs = result.lufsEstimate ?? result.lufs;
+  const rms = result.rmsDb;
+  const clippingCount = result.clippingCount ?? 0;
+  const low = result.lowPercent;
+  const mid = result.midPercent;
+  const high = result.highPercent;
+  const sourceLooksOldOrLowFi = isMono || (typeof rms === 'number' && rms < -21);
+  const balancedTone = typeof low === 'number' && typeof mid === 'number' && typeof high === 'number'
+    ? low >= 22 && low <= 44 && high >= 18 && mid <= 65
+    : false;
+
+  const byTopic: Record<RecommendationTopic, string | null> = {
+    clipping: clippingCount > 0 ? 'Fix clipping first: reduce limiter drive or output gain until crackle is gone.' : null,
+    loudness: typeof lufs === 'number' && lufs < -16 ? 'Increase average signal strength carefully before heavy limiting.' : null,
+    monoStereo: isMono ? 'Preserve mono compatibility unless widening is intentional.' : null,
+    noise: sourceLooksOldOrLowFi ? 'Avoid aggressive compression because artifacts will become more obvious.' : null,
+    tonalBalance: balancedTone ? null : (typeof low === 'number' && low > 44 ? 'Trim low-end buildup slightly before adding loudness.' : typeof high === 'number' && high < 18 ? 'Add a small amount of top-end clarity only if needed.' : null)
+  };
+
+  const confidence = {
+    tonalBalance: balancedTone ? 'Spectral balance appears reasonably balanced (medium confidence).' : 'Spectral balance likely needs refinement (medium confidence).'
+  };
+
+  const recommendations = RECOMMENDATION_PRIORITY.map((topic) => byTopic[topic]).filter((x): x is string => Boolean(x));
+  return { recommendations, confidence, isMono, balancedTone, sourceLooksOldOrLowFi, clippingCount, lufs, rms };
+}
+
 function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
@@ -576,6 +611,7 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   const low = result.lowPercent;
   const clippingCount = result.clippingCount ?? 0;
   const frequencyIssue = detectFrequencyIssue(result);
+  const adaptive = buildContextAwareRecommendations(result);
 
   if (typeof peak === 'number' && peak > -1) {
     wrong.push('The loudest peaks are too hot.');
@@ -604,15 +640,18 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
     matters.push('Boomy bass can hide vocals and detail.');
     first.push('Gently reduce muddy lows. Listen for clearer vocals and tighter bass. Stop when the mix feels balanced, not thin.');
   }
-  if (frequencyIssue) {
+  if (adaptive.balancedTone) {
+    matters.push(adaptive.confidence.tonalBalance);
+  }
+  if (frequencyIssue && !adaptive.balancedTone) {
     wrong.push(`Main frequency issue: ${frequencyIssue.range} (${frequencyIssue.mainIssue}).`);
     matters.push(`Listener impact: ${frequencyIssue.listenerFeeling}`);
     first.push(frequencyIssue.firstSafeFix);
     avoid.push(frequencyIssue.avoid);
   }
 
-  if (channels === 1) avoid.push('Do not force wide stereo effects if mono is intentional.');
-  if (typeof rms === 'number' && rms < -21) avoid.push('Do not stack heavy compression and limiting on a weak source.');
+  if (channels === 1) avoid.push('Preserve mono compatibility unless widening is intentional.');
+  if (typeof rms === 'number' && rms < -21) avoid.push('Avoid aggressive compression because artifacts will become more obvious.');
   if (!avoid.length) avoid.push('Do not chase loudness before peak safety and clipping are clean.');
 
   const readinessLabel = result.readiness ?? 'Needs Work';
@@ -624,13 +663,19 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
     readiness[0] = 'Current release readiness: Needs Work (major tonal/loudness issues detected).';
   }
 
+  const dedupe = (items: string[]) => [...new Set(items.map((x) => x.trim()))];
+  const seen = new Set<string>();
+  const prioritizedFirst: string[] = [];
+  for (const rec of adaptive.recommendations) { if (!seen.has(rec)) { prioritizedFirst.push(rec); seen.add(rec); } }
+  for (const step of first) { if (!seen.has(step)) { prioritizedFirst.push(step); seen.add(step); } }
+
   if (!wrong.length) {
     wrong.push('No major issues were detected in the current analysis.');
     matters.push('Your loudness, peaks, and tone look close to release-safe ranges.');
     first.push('Do a quick reference check. Listen for clean peaks, clear vocals, and balanced bass. Stop when it already feels right.');
   }
 
-  return { wrong, matters, first: first.slice(0, 4), listenFor, avoid: avoid.slice(0, 3), readiness: readiness.slice(0, 1), sourceQuality: sourceQualityNotes.slice(0, 1) };
+  return { wrong: dedupe(wrong), matters: dedupe(matters), first: dedupe(prioritizedFirst).slice(0, 4), listenFor: dedupe(listenFor), avoid: dedupe(avoid).slice(0, 3), readiness: dedupe(readiness).slice(0, 1), sourceQuality: dedupe(sourceQualityNotes).slice(0, 1) };
 }
 
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
@@ -769,6 +814,7 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
   const clippingCount = result.clippingCount ?? 0;
   const isMono = channels === 1;
   const frequencyIssue = detectFrequencyIssue(result);
+  const adaptive = buildContextAwareRecommendations(result);
   if (sourceQuality) {
     hearing.push(`Source quality looks like: ${sourceQuality.rating}.`);
     why.push(sourceQuality.note);
@@ -781,13 +827,13 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
   }
   if (typeof rms === 'number' && rms < -20) {
     hearing.push('It feels soft and low-energy in parts.');
-    why.push('Signal strength is weak, so the mix loses punch and presence.');
-    next.push('Use gentle compression, gain, or a cleaner source recording to improve energy.');
+    why.push('Low RMS / low loudness indicates weak signal strength.');
+    next.push('Increase average signal strength carefully before heavy limiting.');
   }
   if (isMono) {
     hearing.push('It sounds narrow, like most elements are in the center.');
     why.push('The file appears to be mono or has very limited stereo width.');
-    next.push('Check the export settings for stereo and add subtle width only if it fits the song.');
+    next.push('Preserve mono compatibility unless widening is intentional.');
   }
   if (typeof low === 'number' && low < 22) {
     hearing.push('The low-end feels thin and lacks warmth.');
@@ -810,7 +856,10 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     why.push('Clipping was detected in the waveform.');
     next.push('Back off limiting or gain, then export again and verify clipping is gone.');
   }
-  if (frequencyIssue) {
+  if (adaptive.balancedTone) {
+    why.push(adaptive.confidence.tonalBalance);
+  }
+  if (frequencyIssue && !adaptive.balancedTone) {
     hearing.push(`Main frequency issue: ${frequencyIssue.range} feels like ${frequencyIssue.mainIssue}.`);
     why.push(`This creates ${frequencyIssue.listenerFeeling.toLowerCase()}`);
     next.push(frequencyIssue.firstSafeFix);
