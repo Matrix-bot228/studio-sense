@@ -244,35 +244,19 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
 }
 
 
-function buildSoundProfile(result: AnalysisResult | null, fileName: string, analysisState: CentralAnalysisState | null): string {
-  if (!result) return '—';
-  if (analysisState) return analysisState.profile;
-  const context = getSourceContext(result, fileName);
-  const lufs = result.lufs ?? result.lufsEstimate;
-  const low = result.lowPercent;
-  const high = result.highPercent;
-  const clipping = result.clippingCount ?? 0;
-
-  if (clipping === 0 && typeof lufs === 'number' && lufs < -16 && typeof low === 'number' && low > 60) {
-    return 'Clean digital file, but too quiet with low-end buildup';
-  }
-  if (context.isStemKeywordWav) return 'Raw studio stem / multitrack source';
-  if (context.isMono && context.isWav) return 'Mono studio source';
-  if (context.isCompressed) return 'Streaming compressed source';
-  if (context.archivalSignalCount >= 4) return 'Archival transfer';
-
-  const profileNotes: string[] = [];
-  if (clipping > 0) profileNotes.push('clipping present');
-  if (typeof lufs === 'number' && lufs < -16) profileNotes.push('too quiet');
-  if (typeof low === 'number' && low > 60) profileNotes.push('low-end heavy');
-  if (typeof high === 'number' && high < 5) profileNotes.push('muted highs');
-
-  if (!profileNotes.length) return 'Clean digital file with mostly balanced tone';
-  return `Clean digital file with ${profileNotes.join(', ')}`;
+function buildSoundProfile(analysisState: CentralAnalysisState | null): string {
+  if (!analysisState) return 'Analyzing sound profile…';
+  const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
+  if (bassHeavy && tooQuiet) return 'Bass-heavy unmastered mix';
+  if (tooQuiet && darkTone) return 'Quiet dark mix needing gain';
+  if (tooQuiet) return 'Dynamic low-loudness master';
+  if (darkTone && !releaseReady) return 'Warm vintage-style balance';
+  if (releaseReady && !analysisState.majorProblem) return 'Streaming-ready balanced master';
+  return analysisState.profile;
 }
 
-function buildWhyItSoundsThisWay(result: AnalysisResult | null): string[] {
-  if (!result) return ['Run analysis to explain the current sound character.'];
+function buildWhyItSoundsThisWay(result: AnalysisResult | null, analysisState: CentralAnalysisState | null): string[] {
+  if (!result || !analysisState) return ['Analyzing sound profile…'];
   const reasons: string[] = [];
   const lufs = result.lufs ?? result.lufsEstimate;
   const low = result.lowPercent;
@@ -320,8 +304,8 @@ function buildTopMasteringSuggestion(result: AnalysisResult | null): string {
   return result.masteringSuggestion ?? 'Use small tonal moves, then level-match before final print.';
 }
 
-function detectAudioType(result: AnalysisResult | null, fileName: string): string {
-  if (!result) return '';
+function detectAudioType(result: AnalysisResult | null, fileName: string, analysisState: CentralAnalysisState | null): string {
+  if (!result || !analysisState) return 'Analyzing sound profile…';
 
   const file = fileName.toLowerCase();
   const channels = result.channels ?? 0;
@@ -350,6 +334,9 @@ function detectAudioType(result: AnalysisResult | null, fileName: string): strin
   if (channels === 1 && rms < -30 && !looksLikeStem && !isWav) return 'Possible archival or low-level mono source';
   if (channels === 1 && rms < -30 && !looksLikeStem) return 'Possible archival or low-level mono source';
   if (channels === 1) return 'Mono recording';
+  if (analysisState.releaseProblem || analysisState.tooQuiet || analysisState.bassHeavy) {
+    return 'Unmastered/problematic digital mix';
+  }
   if (channels === 2 && rms > -18) return 'Stereo digital recording';
 
   return 'Standard recording';
@@ -357,7 +344,7 @@ function detectAudioType(result: AnalysisResult | null, fileName: string): strin
 
 function detectSourceConfidence(result: AnalysisResult | null, fileName: string): string {
   if (!result) return '—';
-  const audioType = detectAudioType(result, fileName);
+  const audioType = detectAudioType(result, fileName, getCentralAnalysisState(result));
   if (audioType === 'Mono studio stem' || audioType === 'Raw studio stem / multitrack source') return '90%';
   if (audioType === 'Streaming / compressed audio') return '80%';
   if (audioType === 'Clean WAV source') return '70%';
@@ -1056,15 +1043,21 @@ export default function App() {
     if (analysisState?.majorProblem) return `Frequency issues are still present. Current profile: ${analysisState.profile}.`;
     return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
   }, [analysisState, frequencyBands, frequencyFeel, result]);
-  const soundProfile = buildSoundProfile(result, fileName, analysisState);
-  if (analysisState) {
-    console.log('profileInputs', analysisState.profileInputs);
-    console.log('finalProfileLabel', analysisState.profile);
-  }
-  const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
+  const isFinalAnalysisReady = analysisStatus === 'complete' && Boolean(result) && Boolean(analysisState);
+  const soundProfile = buildSoundProfile(isFinalAnalysisReady ? analysisState : null);
+  const whyItSoundsThisWay = buildWhyItSoundsThisWay(isFinalAnalysisReady ? result : null, isFinalAnalysisReady ? analysisState : null);
   const fixSuggestions = buildFixSuggestions(result);
-  const audioType = detectAudioType(result, fileName);
+  const audioType = detectAudioType(isFinalAnalysisReady ? result : null, fileName, isFinalAnalysisReady ? analysisState : null);
   const sourceConfidence = detectSourceConfidence(result, fileName);
+  const profileData = isFinalAnalysisReady ? {
+    soundProfile,
+    audioType,
+    whyItSoundsThisWay,
+    confidence: analysisState?.confidence,
+    primaryIssue: analysisState?.primaryIssue
+  } : null;
+  console.log('PROFILE_RENDER', profileData);
+  console.log('FINAL_ANALYSIS', analysisState);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet → +8 dB gain': {
       title: 'Volume too low',
@@ -1152,9 +1145,9 @@ export default function App() {
   />} 
 
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Balanced'}</p></> : null}</section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p></> : <p>Analyzing sound profile…</p>}</section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
-  <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
+  <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p><p><strong>Source Confidence:</strong> {isFinalAnalysisReady ? sourceConfidence : 'Analyzing sound profile…'}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
   <section className="guidance"><h2>🎛 Mastering suggestion</h2><p>{buildTopMasteringSuggestion(result)}</p></section>
