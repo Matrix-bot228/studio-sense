@@ -178,41 +178,48 @@ function buildFixSuggestions(result: AnalysisResult | null): string[] {
 }
 
 function detectAudioType(result: AnalysisResult | null, fileName: string): string {
-  if (!result) return '—';
-  const context = getSourceContext(result, fileName);
+  if (!result) return '';
+
+  const file = fileName.toLowerCase();
   const channels = result.channels ?? 0;
-  const rms = result.rmsDb;
-  const clippingCount = result.clippingCount ?? 0;
+  const rms = result.rmsDb ?? -99;
   const sampleRate = result.sampleRate ?? 0;
+  const clipping = result.clippingCount ?? 0;
+  const low = result.lowPercent;
+  const mid = result.midPercent;
+  const high = result.highPercent;
 
-  const lowRms = typeof rms === 'number' && rms < -22;
-  const weakRms = typeof rms === 'number' && rms < -20;
-  const safePeaks = typeof result.peakDb === 'number' && result.peakDb <= -1;
-  const cleanSampleRate = sampleRate === 44100 || sampleRate === 48000;
+  const isWav = file.endsWith('.wav') || file.endsWith('.wave');
+  const isCompressed = file.endsWith('.mp3') || file.endsWith('.m4a') || file.endsWith('.aac');
+  const stemWords = [
+    'acappella', 'a cappella', 'vocal', 'vox', 'stem', 'raw', 'closemic', 'close mic', 'mic',
+    'saxophone', 'guitar', 'bass', 'drums', 'piano', 'rl', 'flh', 'cube'
+  ];
+  const looksLikeStem = stemWords.some((word) => file.includes(word));
+  const spectralBalanced = typeof low === 'number' && typeof mid === 'number' && typeof high === 'number'
+    ? high >= 10 && low >= 10 && low <= 60 && mid >= 15
+    : true;
 
-  if (context.isStemKeywordWav || context.isVocalStem) {
-    return 'Raw studio stem / multitrack source — This is likely a raw stem, not a finished master.';
-  }
+  if (isWav && looksLikeStem && channels === 1) return 'Mono studio stem';
+  if (isWav && looksLikeStem) return 'Raw studio stem / multitrack source';
+  if (isWav && sampleRate >= 44100 && clipping === 0 && rms > -30 && spectralBalanced) return 'Clean WAV source';
+  if (isCompressed) return 'Streaming / compressed audio';
+  if (channels === 1 && rms < -30 && !looksLikeStem && !isWav) return 'Possible archival or low-level mono source';
+  if (channels === 1 && rms < -30 && !looksLikeStem) return 'Possible archival or low-level mono source';
+  if (channels === 1) return 'Mono recording';
+  if (channels === 2 && rms > -18) return 'Modern digital recording';
 
-  if (context.isLikelyStem) {
-    return 'Raw instrument stem — This source appears to be a raw isolated track rather than a finished master.';
-  }
+  return 'Standard recording';
+}
 
-  if (context.isWav && channels === 1 && clippingCount === 0 && safePeaks && context.poorSpectralIndicators < 2) {
-    return 'Mono studio stem — Not release-ready by itself, but usable in a mix.';
-  }
-
-  if (context.isWav && cleanSampleRate && clippingCount === 0 && safePeaks && context.archivalSignalCount < 4) {
-    return 'Finished stereo master / modern digital source';
-  }
-
-  if (context.isMono && lowRms && context.poorSpectralIndicators >= 2 && context.archivalSignalCount >= 5) {
-    return 'Archival transfer / old tape source — Multiple indicators suggest analog age or transfer limitations.';
-  }
-
-  if (context.isCompressed && (weakRms || clippingCount > 0 || lowRms)) return 'Streaming compressed source';
-  if (channels >= 2 && typeof rms === 'number' && rms > -19) return 'Finished stereo master / modern digital source';
-  return 'Modern digital recording';
+function detectSourceConfidence(result: AnalysisResult | null, fileName: string): string {
+  if (!result) return '—';
+  const audioType = detectAudioType(result, fileName);
+  if (audioType === 'Mono studio stem' || audioType === 'Raw studio stem / multitrack source') return '90%';
+  if (audioType === 'Streaming / compressed audio') return '80%';
+  if (audioType === 'Clean WAV source') return '70%';
+  if (audioType === 'Possible archival or low-level mono source') return '60%';
+  return '50%';
 }
 
 
@@ -824,6 +831,7 @@ export default function App() {
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result, fileName);
+  const sourceConfidence = detectSourceConfidence(result, fileName);
   const markerGuidance: Record<string, { title: string; explanation: string; fix: string; badgeTone: 'bad' | 'warn' }> = {
     'Too quiet → +8 dB gain': {
       title: 'Volume too low',
@@ -904,7 +912,7 @@ export default function App() {
 
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
-  <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p></section>
+  <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
 
