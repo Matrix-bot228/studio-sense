@@ -100,6 +100,24 @@ type CentralAnalysisState = {
   majorProblem: boolean;
   releaseReady: boolean;
   profile: string;
+  profileInputs: {
+    low: number;
+    mid: number;
+    high: number;
+    lufs: number | null;
+    clipping: number;
+    releaseReady: boolean;
+    releaseProblem: boolean;
+    majorProblem: boolean;
+    bassHeavy: boolean;
+    tooQuiet: boolean;
+    darkTone: boolean;
+    brightThin: boolean;
+    loudCompressed: boolean;
+    muddy: boolean;
+    harsh: boolean;
+    problemArea: boolean;
+  };
   confidence: 'Low' | 'Medium' | 'High';
   primaryIssue: string;
   mixCharacter: string[];
@@ -120,20 +138,29 @@ function getCentralAnalysisState(result: AnalysisResult | null): CentralAnalysis
   const loudCompressed = (typeof lufs === 'number' && lufs >= -10.5) || (result.clippingCount ?? 0) > 0;
   const darkTone = (high < 14 || frequencyIssue?.range === '8k–12k') && low > 34;
   const brightThin = low < 22 && (high > 26 || frequencyIssue?.range === '2k–5k');
-  const releaseProblem = result.readiness === 'Problem Area';
+  const releaseProblem = result.readiness === 'Problem Area' || result.readiness === 'Needs Work';
+  const problemArea = releaseProblem;
   const majorProblem = bassMasking || bassHeavy || muddy || harsh || tooQuiet || releaseProblem;
   const releaseReady = result.readiness === 'Release Ready' && !majorProblem;
+  const clipping = result.clippingCount ?? 0;
 
+  const hasCriticalIssue = bassHeavy || tooQuiet || problemArea || muddy || harsh || clipping > 0;
   let profile = 'Balanced modern master';
-  if (bassHeavy && tooQuiet) profile = 'Warm bass-heavy unmastered mix';
-  else if (harsh && loudCompressed) profile = 'Aggressive compressed master';
-  else if (releaseReady) profile = 'Balanced streaming-ready master';
-  else if (loudCompressed && !tooQuiet) profile = 'Loud compressed master';
-  else if (muddy || bassMasking) profile = 'Mid-heavy muddy mix';
-  else if (darkTone) profile = 'Dark vintage tone';
-  else if (brightThin) profile = 'Bright thin mix';
-  else if (tooQuiet) profile = 'Dynamic unmastered mix';
-  else if (bassHeavy) profile = 'Warm bass-heavy modern mix';
+  if (hasCriticalIssue) {
+    if (bassHeavy && tooQuiet) profile = 'Warm bass-heavy unmastered mix';
+    else if (darkTone && tooQuiet) profile = 'Dark low-loudness mix';
+    else if (brightThin && loudCompressed) profile = 'Bright compressed master';
+    else if (harsh && loudCompressed) profile = 'Aggressive compressed master';
+    else if (tooQuiet) profile = darkTone ? 'Dark low-loudness mix' : 'Dynamic unmastered mix';
+    else if (muddy || bassMasking || bassHeavy) profile = 'Warm bass-heavy unmastered mix';
+    else if (problemArea) profile = 'Problem-area unmastered mix';
+  } else if (releaseReady) {
+    profile = 'Balanced modern master';
+  } else if (darkTone) {
+    profile = 'Dynamic vintage-style mix';
+  } else if (brightThin) {
+    profile = 'Bright modern mix';
+  }
 
   let primaryIssue = 'none detected';
   if (bassHeavy || bassMasking) primaryIssue = 'excessive low-end buildup';
@@ -169,7 +196,10 @@ function getCentralAnalysisState(result: AnalysisResult | null): CentralAnalysis
   if (!majorProblem && releaseReady) {
     primaryIssue = 'none detected';
   }
-  return { bassMasking, bassHeavy, muddy, harsh, tooQuiet, loudCompressed, darkTone, brightThin, releaseProblem, majorProblem, releaseReady, profile, confidence, primaryIssue, mixCharacter: uniqueMixCharacter };
+  return {
+    bassMasking, bassHeavy, muddy, harsh, tooQuiet, loudCompressed, darkTone, brightThin, releaseProblem, majorProblem, releaseReady, profile, confidence, primaryIssue, mixCharacter: uniqueMixCharacter,
+    profileInputs: { low, mid, high, lufs: typeof lufs === 'number' ? lufs : null, clipping, releaseReady, releaseProblem, majorProblem, bassHeavy, tooQuiet, darkTone, brightThin, loudCompressed, muddy, harsh, problemArea }
+  };
 }
 
 type WorkerAudioData = { channels: Float32Array[]; sampleRate: number; durationSec: number };
@@ -320,7 +350,7 @@ function detectAudioType(result: AnalysisResult | null, fileName: string): strin
   if (channels === 1 && rms < -30 && !looksLikeStem && !isWav) return 'Possible archival or low-level mono source';
   if (channels === 1 && rms < -30 && !looksLikeStem) return 'Possible archival or low-level mono source';
   if (channels === 1) return 'Mono recording';
-  if (channels === 2 && rms > -18) return 'Modern digital recording';
+  if (channels === 2 && rms > -18) return 'Stereo digital recording';
 
   return 'Standard recording';
 }
@@ -1027,6 +1057,10 @@ export default function App() {
     return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
   }, [analysisState, frequencyBands, frequencyFeel, result]);
   const soundProfile = buildSoundProfile(result, fileName, analysisState);
+  if (analysisState) {
+    console.log('profileInputs', analysisState.profileInputs);
+    console.log('finalProfileLabel', analysisState.profile);
+  }
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result, fileName);
