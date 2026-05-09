@@ -85,6 +85,48 @@ function formatClock(seconds: number | null | undefined): string {
   const s = Math.floor(seconds % 60);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+
+type CentralAnalysisState = {
+  bassMasking: boolean;
+  bassHeavy: boolean;
+  muddy: boolean;
+  harsh: boolean;
+  tooQuiet: boolean;
+  releaseProblem: boolean;
+  majorProblem: boolean;
+  releaseReady: boolean;
+  profile: string;
+};
+
+function getCentralAnalysisState(result: AnalysisResult | null): CentralAnalysisState | null {
+  if (!result) return null;
+  const low = result.lowPercent ?? 0;
+  const mid = result.midPercent ?? 0;
+  const high = result.highPercent ?? 0;
+  const lufs = result.lufs ?? result.lufsEstimate;
+  const frequencyIssue = detectFrequencyIssue(result);
+  const bassMasking = low > 44;
+  const bassHeavy = low > 52;
+  const muddy = (mid > 64 && low > 30) || frequencyIssue?.range === '300–800 Hz' || frequencyIssue?.range === '200–400 Hz';
+  const harsh = frequencyIssue?.range === '2k–5k' || (high > 40 && mid > 22);
+  const tooQuiet = typeof lufs === 'number' && lufs < -16;
+  const releaseProblem = result.readiness === 'Problem Area';
+  const majorProblem = bassMasking || bassHeavy || muddy || harsh || tooQuiet || releaseProblem;
+  const releaseReady = result.readiness === 'Release Ready' && !majorProblem;
+
+  let profile = 'Balanced modern master';
+  if (majorProblem) {
+    if (tooQuiet && !harsh) profile = 'Dynamic unmastered mix';
+    if (bassHeavy && muddy) profile = 'Warm but muddy mix';
+    else if (bassHeavy) profile = 'Bass-heavy modern mix';
+    else if ((high < 14 || frequencyIssue?.range === '8k–12k') && low > 36) profile = 'Dark vintage tone';
+    else if (!tooQuiet && harsh) profile = 'Loud but harsh mix';
+    else if (low < 22 && (high > 26 || frequencyIssue?.range === '2k–5k')) profile = 'Thin bright mix';
+  }
+  return { bassMasking, bassHeavy, muddy, harsh, tooQuiet, releaseProblem, majorProblem, releaseReady, profile };
+}
+
 type WorkerAudioData = { channels: Float32Array[]; sampleRate: number; durationSec: number };
 type WorkerRequest =
   | { type: 'analyze'; payload: WorkerAudioData }
@@ -127,8 +169,9 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
 }
 
 
-function buildSoundProfile(result: AnalysisResult | null, fileName: string): string {
+function buildSoundProfile(result: AnalysisResult | null, fileName: string, analysisState: CentralAnalysisState | null): string {
   if (!result) return '—';
+  if (analysisState) return analysisState.profile;
   const context = getSourceContext(result, fileName);
   const lufs = result.lufs ?? result.lufsEstimate;
   const low = result.lowPercent;
@@ -450,7 +493,7 @@ function buildSafeModeFixPlan(result: AnalysisResult | null): SafeModeCoachPlan 
   };
 }
 
-function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
+function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
   const first: string[] = [];
@@ -514,6 +557,10 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   const scoreText = typeof result.score === 'number' ? `${Math.round(result.score)} / 100` : 'not scored yet';
   if (sourceQuality) sourceQualityNotes.push(`Source quality: ${sourceQuality.rating}. ${sourceQuality.note}`);
   readiness.push(`Current release readiness: ${readinessLabel} (${scoreText}).`);
+
+  if (analysisState?.majorProblem && result.readiness === 'Release Ready') {
+    readiness[0] = 'Current release readiness: Needs Work (major tonal/loudness issues detected).';
+  }
 
   if (!wrong.length) {
     wrong.push('No major issues were detected in the current analysis.');
@@ -647,7 +694,7 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
   };
 }
 
-function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
+function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
   const hearing: string[] = [];
   const why: string[] = [];
   const next: string[] = [];
@@ -707,7 +754,7 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     next.push(frequencyIssue.firstSafeFix);
   }
 
-  const healthy = hearing.length === 0 && !frequencyIssue;
+  const healthy = hearing.length === 0 && !frequencyIssue && !analysisState?.majorProblem;
   if (healthy) {
     hearing.push('The track already sounds balanced and competitive for release.');
     why.push('Loudness, peak headroom, stereo format, and tonal balance are internally consistent.');
@@ -848,8 +895,9 @@ export default function App() {
   ] : [];
   const hasAnalyzedTrack = Boolean(result);
   const sourceQuality = useMemo(() => assessSourceQuality(result, fileName), [result, fileName]);
-  const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality) : null;
-  const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality) : null;
+  const analysisState = useMemo(() => getCentralAnalysisState(result), [result]);
+  const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality, analysisState) : null;
+  const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality, analysisState) : null;
   const frequencyFeel = result ? detectFrequencyIssue(result) : null;
 
   const listeningCoach = autoFixPlan ? {
@@ -930,9 +978,10 @@ export default function App() {
       if (frequencyFeel) return `Low-end energy is elevated. Main issue: ${frequencyFeel.range} (${frequencyFeel.mainIssue}). Clean this before adding loudness.`;
       return 'The bass energy is dominating the mix and may cause speaker vibration or muddy playback.';
     }
+    if (analysisState?.majorProblem) return `Frequency issues are still present. Current profile: ${analysisState.profile}.`;
     return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
-  }, [frequencyBands, frequencyFeel, result]);
-  const soundProfile = buildSoundProfile(result, fileName);
+  }, [analysisState, frequencyBands, frequencyFeel, result]);
+  const soundProfile = buildSoundProfile(result, fileName, analysisState);
   const whyItSoundsThisWay = buildWhyItSoundsThisWay(result);
   const fixSuggestions = buildFixSuggestions(result);
   const audioType = detectAudioType(result, fileName);
