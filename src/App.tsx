@@ -28,6 +28,14 @@ type AnalysisResult = {
   masteringSuggestion?: string;
   readiness?: ReadinessCategory;
 };
+type AnalysisDebug = {
+  bandEnergy?: Record<string, number>;
+  ratios?: Record<string, number>;
+  loudness?: Record<string, number>;
+  profileDecision?: string;
+  finalReason?: string;
+  frameCount?: number;
+};
 type SourceQualityAssessment = {
   rating: SourceQualityCategory;
   confidence: number;
@@ -670,6 +678,7 @@ export default function App() {
   const [manualProblemAreas, setManualProblemAreas] = useState<ProblemArea[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
+  const [analysisDebug, setAnalysisDebug] = useState<AnalysisDebug | null>(null);
   const [status, setStatus] = useState('Upload audio to start analysis.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
@@ -731,8 +740,11 @@ export default function App() {
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
+    workerRef.current?.terminate();
+    workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
     setLoading(true); setIsAnalyzing(true); setFileName(file.name); setStatus('Analyzing…'); setAnalysisStatus('processing'); setAnalysisStage('Loading audio'); setLargeFileWarning('');
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
+    setAnalysisDebug(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
     setAudioBuffer(null); audioDataRef.current = null;
@@ -753,12 +765,13 @@ export default function App() {
       if (msg.data.type !== 'done') throw new Error('Invalid worker response');
       setResult(msg.data.result);
       setAutoMarkers(msg.data.markers);
+      setAnalysisDebug(msg.data.debug ?? null);
       if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
       setDuration(decoded.duration); setCurrentTime(0);
       setStatus('Analysis complete');
       setAnalysisStatus('complete');
     } catch {
-      setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null;
+      setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null; setAnalysisDebug(null);
       setAnalysisStatus('failed');
     } finally { setLoading(false); setIsAnalyzing(false); event.target.value = ''; }
   }
@@ -967,6 +980,7 @@ export default function App() {
   {isCreatorMode ? <section className="metrics-grid">
     <div className="metric"><span>Source Quality</span><strong><span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></strong></div><div className="metric"><span>Release Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div><div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div><div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div><div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance (rough)</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div><div className="metric span-2"><span>Source type guess</span><strong>{sourceQuality?.sourceTypeGuess ?? 'Run analysis to classify source type.'}</strong></div><div className="metric span-2"><span>Source quality note</span><strong>{sourceQuality?.note ?? 'Run analysis to classify source quality.'}</strong></div>
   </section> : null}
+  {isCreatorMode && result ? <section className="guidance"><h2>Developer Debug (temporary)</h2><details><summary>Show analysis internals</summary><pre>{JSON.stringify(analysisDebug, null, 2)}</pre></details></section> : null}
 
   {isCreatorMode ? <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section> : null}
 
