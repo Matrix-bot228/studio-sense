@@ -151,6 +151,16 @@ input[type='file'] { display: none; }
 }
 
 .guidance p { margin: 4px 0; font-size: 0.8rem; }
+.frequency-grid { display: grid; gap: 10px; margin-top: 10px; }
+.frequency-row { border: 1px solid #344887; background: rgba(11, 17, 37, 0.7); border-radius: 10px; padding: 8px; }
+.frequency-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.frequency-row-head strong { font-size: 0.82rem; }
+.frequency-row-head strong span { opacity: 0.75; font-weight: 500; }
+.frequency-meter { margin-top: 7px; height: 10px; border-radius: 999px; background: #0b132c; border: 1px solid #30417b; overflow: hidden; }
+.frequency-fill { height: 100%; border-radius: 999px; transition: width 0.25s ease; }
+.frequency-fill.green { background: linear-gradient(90deg, #24b36f, #66f0a8); }
+.frequency-fill.yellow { background: linear-gradient(90deg, #b4861e, #ffd86e); }
+.frequency-fill.red { background: linear-gradient(90deg, #b63838, #ff7c7c); }
 
 .verdicts ul {
   margin: 0;
