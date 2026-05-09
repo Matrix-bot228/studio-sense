@@ -37,9 +37,23 @@ type TonalFingerprint = {
   profile: string;
   confidence: number;
   tags: string[];
-  lowRatio: number;
-  highRatio: number;
-  subToHighRatio: number;
+  bandEnergy: {
+    sub: number;
+    bass: number;
+    lowMids: number;
+    mids: number;
+    upperMids: number;
+    highs: number;
+    air: number;
+  };
+  ratios: {
+    subToBass: number;
+    bassToMids: number;
+    lowMidToUpperMid: number;
+    presenceToBody: number;
+    highsToAir: number;
+    lowsToHighs: number;
+  };
   stereoWidth: number;
   crestFactor: number;
   dynamicRangeDb: number;
@@ -55,6 +69,7 @@ function confidenceText(label: string, score: number): string { return `${label}
 
 function getBalanceVerdict(low: number, mid: number, high: number, fingerprint: TonalFingerprint): string {
   const notes: string[] = [];
+  const { ratios } = fingerprint;
 
   if (fingerprint.tags.includes('muddymix')) {
     notes.push(confidenceText('Possible low-end buildup around the low mids', 0.72));
@@ -76,6 +91,16 @@ function getBalanceVerdict(low: number, mid: number, high: number, fingerprint: 
   }
   if (fingerprint.tags.includes('intentionalwarm')) {
     notes.push(confidenceText('Likely intentional warm tonal balance', 0.76));
+  }
+  if (fingerprint.tags.includes('cinematiclow')) {
+    notes.push(confidenceText('Likely intentional cinematic low-end scale', 0.79));
+  }
+  if (fingerprint.tags.includes('lofisofttop')) {
+    notes.push(confidenceText('Likely intentional lo-fi soft top-end texture', 0.83));
+  }
+
+  if (ratios.lowMidToUpperMid > 1.45 && !fingerprint.tags.includes('cinematiclow')) {
+    notes.push(confidenceText('Possible low-mid buildup that may mask vocal presence', 0.68));
   }
 
   if (notes.length === 0) {
@@ -155,69 +180,94 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
     }
     frequencyBins[k] = re * re + im * im;
   }
-  const subEnd = hzToBin(120, fftSize, sampleRate);
-  const lowEnd = hzToBin(280, fftSize, sampleRate);
-  const lowMidEnd = hzToBin(750, fftSize, sampleRate);
-  const midEnd = hzToBin(4000, fftSize, sampleRate);
-  const highMidEnd = hzToBin(9000, fftSize, sampleRate);
-  let sub = 0; let low = 0; let lowMid = 0; let mid = 0; let highMid = 0; let high = 0;
+  const bandEdges = {
+    sub: hzToBin(60, fftSize, sampleRate),
+    bass: hzToBin(180, fftSize, sampleRate),
+    lowMids: hzToBin(500, fftSize, sampleRate),
+    mids: hzToBin(2000, fftSize, sampleRate),
+    upperMids: hzToBin(6000, fftSize, sampleRate),
+    highs: hzToBin(12000, fftSize, sampleRate)
+  };
+  let sub = 0; let bass = 0; let lowMid = 0; let mid = 0; let upperMid = 0; let highs = 0; let air = 0;
   for (let i = 0; i < frequencyBins.length; i += 1) {
     const v = frequencyBins[i] ?? 0;
-    if (i <= subEnd) sub += v;
-    if (i <= lowEnd) low += v;
-    else if (i <= lowMidEnd) lowMid += v;
-    else if (i <= midEnd) mid += v;
-    else if (i <= highMidEnd) highMid += v;
-    else high += v;
+    if (i <= bandEdges.sub) sub += v;
+    else if (i <= bandEdges.bass) bass += v;
+    else if (i <= bandEdges.lowMids) lowMid += v;
+    else if (i <= bandEdges.mids) mid += v;
+    else if (i <= bandEdges.upperMids) upperMid += v;
+    else if (i <= bandEdges.highs) highs += v;
+    else air += v;
   }
 
-  const totalBand = Math.max(low + lowMid + mid + highMid + high, Number.EPSILON);
-  const lowPercent = ((low + lowMid) / totalBand) * 100;
+  const totalBand = Math.max(sub + bass + lowMid + mid + upperMid + highs + air, Number.EPSILON);
+  const lowPercent = ((sub + bass + lowMid) / totalBand) * 100;
   const midPercent = (mid / totalBand) * 100;
-  const highPercent = ((highMid + high) / totalBand) * 100;
+  const highPercent = ((upperMid + highs + air) / totalBand) * 100;
 
   const lufsEstimate = rmsDb - 0.7;
   const crestFactor = peakDb - rmsDb;
   const dynamicRangeDb = clamp(crestFactor + 3, 2, 20);
   const stereoWidth = sideEnergy > 0 ? clamp(sideEnergy / Math.max(midEnergy, Number.EPSILON), 0, 1.8) : 0;
 
-  const lowRatio = (low + lowMid) / Math.max(mid + highMid + high, Number.EPSILON);
-  const highRatio = (highMid + high) / Math.max(low + lowMid + mid, Number.EPSILON);
-  const subToHighRatio = sub / Math.max(highMid + high, Number.EPSILON);
+  const ratios = {
+    subToBass: sub / Math.max(bass, Number.EPSILON),
+    bassToMids: bass / Math.max(mid, Number.EPSILON),
+    lowMidToUpperMid: lowMid / Math.max(upperMid, Number.EPSILON),
+    presenceToBody: (upperMid + highs) / Math.max(bass + lowMid, Number.EPSILON),
+    highsToAir: highs / Math.max(air, Number.EPSILON),
+    lowsToHighs: (sub + bass + lowMid) / Math.max(upperMid + highs + air, Number.EPSILON)
+  };
 
   const tags: string[] = [];
-  const thinMixScore = clamp((0.95 - lowRatio) * 0.9 + (12 - lowPercent) * 0.03, 0, 1);
+  const thinMixScore = clamp((0.95 - ratios.lowsToHighs) * 0.8 + (0.8 - ratios.bassToMids) * 0.6, 0, 1);
   if (thinMixScore > 0.55) tags.push('thinmix');
-  const harshMixScore = clamp((highRatio - 0.58) * 1.4 + (highPercent - 34) * 0.02, 0, 1);
+  const harshMixScore = clamp((ratios.presenceToBody - 1.15) * 0.9 + (highPercent - 34) * 0.015, 0, 1);
   if (harshMixScore > 0.58) tags.push('harshmix', 'brightsharp');
-  const muddyScore = clamp((lowRatio - 1.28) * 1.1 + (52 - highPercent) * 0.015, 0, 1);
+  const muddyScore = clamp((ratios.lowMidToUpperMid - 1.22) * 0.9 + (ratios.lowsToHighs - 1.2) * 0.4, 0, 1);
   if (muddyScore > 0.6 && highPercent > 8) tags.push('muddymix');
   const compressedScore = clamp((8.5 - crestFactor) * 0.16 + ((peakDb > -0.6 ? 1 : 0) * 0.35), 0, 1);
   if (compressedScore > 0.6) tags.push('compressedmix');
   if (compressedScore > 0.78 && lufsEstimate > -10.5) tags.push('overlimited');
-  if (lowRatio > 1.2 && highRatio < 0.26) tags.push('darkwarm');
-  if (highRatio > 0.62 && lowRatio < 1) tags.push('brightsharp');
+  if (ratios.lowsToHighs > 1.7 && ratios.presenceToBody < 0.9) tags.push('darkwarm');
+  if (ratios.presenceToBody > 1.35 && ratios.lowsToHighs < 1.2) tags.push('brightsharp');
   if (midPercent > 44 && lowPercent < 38 && highPercent < 26) tags.push('vocalforward');
   if (lufsEstimate < -18.8 && rmsDb < -19.5) tags.push('lowenergy');
   if (stereoWidth < 0.12 && numberOfChannels > 1) tags.push('narrowstereo');
   if (dynamicRangeDb > 13 && compressedScore < 0.4) tags.push('dynamicopen');
 
-  const isIntentionalSoftTop = highPercent < 9 && dynamicRangeDb > 12 && compressedScore < 0.4 && lowRatio < 1.45;
+  const isIntentionalSoftTop = highPercent < 12 && dynamicRangeDb > 11 && compressedScore < 0.45 && ratios.lowsToHighs < 2.1;
   if (isIntentionalSoftTop) tags.push('intentionalwarm');
+  if (isIntentionalSoftTop && ratios.highsToAir > 2.2) tags.push('lofisofttop');
+  if (ratios.subToBass > 1.12 && ratios.lowsToHighs > 1.85 && dynamicRangeDb > 9) tags.push('cinematiclow');
 
   let profile = 'Balanced commercial';
   if (tags.includes('overlimited')) profile = 'Over-compressed';
   else if (tags.includes('dynamicopen')) profile = 'Natural dynamic';
+  else if (tags.includes('lofisofttop')) profile = 'Lo-fi textured';
+  else if (tags.includes('cinematiclow')) profile = 'Dark cinematic';
   else if (tags.includes('muddymix')) profile = 'Dark cinematic';
   else if (tags.includes('brightsharp')) profile = 'Modern bright';
-  else if (tags.includes('vocalforward')) profile = 'Mid-forward';
-  else if (tags.includes('thinmix')) profile = 'Thin / weak';
-  else if (lowRatio > 1.22) profile = 'Bass-heavy';
+  else if (tags.includes('vocalforward')) profile = 'Vocal forward';
+  else if (tags.includes('thinmix')) profile = 'Thin mix';
+  else if (ratios.lowsToHighs > 1.55) profile = 'Bass heavy';
   else if (isIntentionalSoftTop) profile = 'Lo-fi texture';
   else if (tags.includes('darkwarm')) profile = 'Warm vintage';
+  else if (midPercent > 43 && highPercent < 24) profile = 'Mid focused';
+  else if (harshMixScore > 0.6) profile = 'Harsh digital';
+  else if (dynamicRangeDb > 13.2) profile = 'Open dynamic';
 
-  const confidence = clamp(0.55 + Math.abs(lowRatio - 1) * 0.18 + Math.abs(highRatio - 0.35) * 0.2 + (tags.length * 0.03), 0.52, 0.96);
-  const fingerprint: TonalFingerprint = { profile, confidence, tags, lowRatio, highRatio, subToHighRatio, stereoWidth, crestFactor, dynamicRangeDb };
+  const confidence = clamp(0.54 + Math.abs(ratios.lowsToHighs - 1.2) * 0.14 + Math.abs(ratios.presenceToBody - 1) * 0.16 + (tags.length * 0.03), 0.52, 0.96);
+  const fingerprint: TonalFingerprint = {
+    profile,
+    confidence,
+    tags,
+    bandEnergy: { sub, bass, lowMids: lowMid, mids: mid, upperMids: upperMid, highs, air },
+    ratios,
+    stereoWidth,
+    crestFactor,
+    dynamicRangeDb
+  };
 
   const loudnessDelta = lufsEstimate - TARGET_LUFS;
   let score = 100;
@@ -249,9 +299,12 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
 
   let masteringSuggestion = `${fingerprint.profile} profile detected (${Math.round(fingerprint.confidence * 100)}% confidence).`;
   if (tags.includes('intentionalwarm')) masteringSuggestion += ' Highs appear intentionally soft; avoid over-brightening unless translation fails.';
+  if (tags.includes('cinematiclow')) masteringSuggestion += ' Low-end scale feels intentional for cinematic impact; only trim lows if it masks dialogue/vocals.';
+  if (tags.includes('lofisofttop')) masteringSuggestion += ' Soft sparkle appears stylistic; preserve texture before adding high-shelf boosts.';
   if (tags.includes('overlimited')) masteringSuggestion += ' Reduce limiter drive to recover dynamics and transient shape.';
   else if (tags.includes('dynamicopen')) masteringSuggestion += ' Dynamics are open; preserve transient movement during final limiting.';
   else if (tags.includes('muddymix')) masteringSuggestion += ' Tighten 200–500 Hz gently to clear space for vocals and snare presence.';
+  else if (tags.includes('thinmix')) masteringSuggestion += ' Add body with broad 120–250 Hz support before boosting top-end.';
 
   return {
     durationSec: endSec - startSec || duration,
