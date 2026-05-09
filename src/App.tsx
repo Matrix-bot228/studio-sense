@@ -93,10 +93,16 @@ type CentralAnalysisState = {
   muddy: boolean;
   harsh: boolean;
   tooQuiet: boolean;
+  loudCompressed: boolean;
+  darkTone: boolean;
+  brightThin: boolean;
   releaseProblem: boolean;
   majorProblem: boolean;
   releaseReady: boolean;
   profile: string;
+  confidence: 'Low' | 'Medium' | 'High';
+  primaryIssue: string;
+  mixCharacter: string[];
 };
 
 function getCentralAnalysisState(result: AnalysisResult | null): CentralAnalysisState | null {
@@ -111,20 +117,59 @@ function getCentralAnalysisState(result: AnalysisResult | null): CentralAnalysis
   const muddy = (mid > 64 && low > 30) || frequencyIssue?.range === '300–800 Hz' || frequencyIssue?.range === '200–400 Hz';
   const harsh = frequencyIssue?.range === '2k–5k' || (high > 40 && mid > 22);
   const tooQuiet = typeof lufs === 'number' && lufs < -16;
+  const loudCompressed = (typeof lufs === 'number' && lufs >= -10.5) || (result.clippingCount ?? 0) > 0;
+  const darkTone = (high < 14 || frequencyIssue?.range === '8k–12k') && low > 34;
+  const brightThin = low < 22 && (high > 26 || frequencyIssue?.range === '2k–5k');
   const releaseProblem = result.readiness === 'Problem Area';
   const majorProblem = bassMasking || bassHeavy || muddy || harsh || tooQuiet || releaseProblem;
   const releaseReady = result.readiness === 'Release Ready' && !majorProblem;
 
   let profile = 'Balanced modern master';
-  if (majorProblem) {
-    if (tooQuiet && !harsh) profile = 'Dynamic unmastered mix';
-    if (bassHeavy && muddy) profile = 'Warm but muddy mix';
-    else if (bassHeavy) profile = 'Bass-heavy modern mix';
-    else if ((high < 14 || frequencyIssue?.range === '8k–12k') && low > 36) profile = 'Dark vintage tone';
-    else if (!tooQuiet && harsh) profile = 'Loud but harsh mix';
-    else if (low < 22 && (high > 26 || frequencyIssue?.range === '2k–5k')) profile = 'Thin bright mix';
+  if (bassHeavy && tooQuiet) profile = 'Warm bass-heavy unmastered mix';
+  else if (harsh && loudCompressed) profile = 'Aggressive compressed master';
+  else if (releaseReady) profile = 'Balanced streaming-ready master';
+  else if (loudCompressed && !tooQuiet) profile = 'Loud compressed master';
+  else if (muddy || bassMasking) profile = 'Mid-heavy muddy mix';
+  else if (darkTone) profile = 'Dark vintage tone';
+  else if (brightThin) profile = 'Bright thin mix';
+  else if (tooQuiet) profile = 'Dynamic unmastered mix';
+  else if (bassHeavy) profile = 'Warm bass-heavy modern mix';
+
+  let primaryIssue = 'none detected';
+  if (bassHeavy || bassMasking) primaryIssue = 'excessive low-end buildup';
+  if (tooQuiet) primaryIssue = 'low streaming loudness';
+  if (harsh) primaryIssue = 'harsh upper mids';
+  if (muddy) primaryIssue = 'muddy low-mid congestion';
+  if (loudCompressed && harsh) primaryIssue = 'compression-driven harshness';
+
+  const mixCharacter: string[] = [];
+  if (bassHeavy) mixCharacter.push('Warm');
+  if (darkTone) mixCharacter.push('Dark', 'Vintage');
+  if (brightThin || harsh) mixCharacter.push('Bright');
+  if (!releaseProblem && !tooQuiet) mixCharacter.push('Modern');
+  if (loudCompressed) mixCharacter.push('Punchy');
+  if (tooQuiet) mixCharacter.push('Soft');
+  if ((result.channels ?? 2) >= 2) mixCharacter.push('Wide stereo');
+  if ((result.channels ?? 2) === 1) mixCharacter.push('Narrow stereo');
+  const uniqueMixCharacter = Array.from(new Set(mixCharacter));
+
+  const confidenceSignals = [
+    bassHeavy,
+    muddy || bassMasking,
+    harsh,
+    tooQuiet || loudCompressed,
+    darkTone || brightThin,
+    typeof lufs === 'number',
+    typeof low === 'number' && typeof mid === 'number' && typeof high === 'number'
+  ].filter(Boolean).length;
+  let confidence: 'Low' | 'Medium' | 'High' = 'Low';
+  if (confidenceSignals >= 6) confidence = 'High';
+  else if (confidenceSignals >= 4) confidence = 'Medium';
+
+  if (!majorProblem && releaseReady) {
+    primaryIssue = 'none detected';
   }
-  return { bassMasking, bassHeavy, muddy, harsh, tooQuiet, releaseProblem, majorProblem, releaseReady, profile };
+  return { bassMasking, bassHeavy, muddy, harsh, tooQuiet, loudCompressed, darkTone, brightThin, releaseProblem, majorProblem, releaseReady, profile, confidence, primaryIssue, mixCharacter: uniqueMixCharacter };
 }
 
 type WorkerAudioData = { channels: Float32Array[]; sampleRate: number; durationSec: number };
@@ -1073,7 +1118,7 @@ export default function App() {
   />} 
 
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Balanced'}</p></> : null}</section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType || '—'}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
