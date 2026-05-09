@@ -147,7 +147,9 @@ function buildSoundProfile(result: AnalysisResult | null, fileName: string): str
   if (typeof result.lowPercent === 'number' && result.lowPercent < 15) issues.push('thin');
   if (typeof result.rmsDb === 'number' && result.rmsDb < -21 && (result.channels ?? 0) === 1 && !cleanMonoStem) issues.push('low-fidelity');
 
-  if (!issues.length) return 'Clean and balanced recording';
+  const heavyLowEnd = typeof result.lowPercent === 'number' && result.lowPercent > 44;
+  if (!issues.length && !heavyLowEnd) return 'Clean and balanced recording';
+  if (heavyLowEnd) issues.push('heavy low-end');
 
   const uniqueIssues = [...new Set(issues)];
   const descriptors = uniqueIssues.join(', ');
@@ -254,12 +256,33 @@ type ListeningCoachingMode = {
 type AppMode = 'beginner' | 'creator';
 type FrequencyBandStatus = 'green' | 'yellow' | 'red';
 type FrequencyBandRow = { label: string; range: string; energy: number; status: FrequencyBandStatus; humanWording: string };
+type FrequencyIssue = { range: string; mainIssue: string; listenerFeeling: string; firstSafeFix: string; avoid: string; markerLabel: string };
 
 function clampPercent(value: number): number { return Math.max(0, Math.min(100, value)); }
 function bandStatus(value: number, yellowAt: number, redAt: number): FrequencyBandStatus {
   if (value >= redAt) return 'red';
   if (value >= yellowAt) return 'yellow';
   return 'green';
+}
+
+function detectFrequencyIssue(result: AnalysisResult | null): FrequencyIssue | null {
+  if (!result) return null;
+  const low = result.lowPercent ?? 0;
+  const mid = result.midPercent ?? 0;
+  const high = result.highPercent ?? 0;
+  const subBass = clampPercent(low * 0.52);
+  const bass = clampPercent(low * 0.48 + mid * 0.08);
+  const cardboard = clampPercent(mid * 0.34 + low * 0.14);
+  const muddyMids = clampPercent(mid * 0.52 + low * 0.12);
+  const harshness = clampPercent(mid * 0.2 + high * 0.5);
+  const sparkle = clampPercent(high * 0.42);
+  if (subBass >= 34) return { range: '20–60 Hz', mainIssue: 'sub bass overload / rumble', listenerFeeling: 'Rumble and uncontrolled low-end pressure.', firstSafeFix: 'Gently reduce 20–60 Hz before any loudness increase.', avoid: 'Do not raise overall volume before controlling rumble.', markerLabel: '20–60 Hz rumble overload' };
+  if (bass >= 32) return { range: '80–150 Hz', mainIssue: 'boxy bass / speaker strain / muddy warmth', listenerFeeling: 'Bass feels boxy with speaker strain and unpleasant pressure.', firstSafeFix: 'Gently reduce 80–150 Hz before increasing loudness.', avoid: 'Do not boost overall volume before fixing the bass.', markerLabel: '80–150 Hz too strong' };
+  if (cardboard >= 35) return { range: '200–400 Hz', mainIssue: 'cardboard / boxy mids', listenerFeeling: 'Mids feel boxed-in and papery.', firstSafeFix: 'Use a small subtractive cut around 200–400 Hz.', avoid: 'Do not add more mids to force clarity.', markerLabel: '200–400 Hz boxy mids' };
+  if (muddyMids >= 42) return { range: '300–800 Hz', mainIssue: 'mud / cloudy mids', listenerFeeling: 'Clarity feels masked and cloudy.', firstSafeFix: 'Trim 300–800 Hz slightly and re-check vocal clarity.', avoid: 'Do not add loudness while clarity is masked.', markerLabel: '300–800 Hz muddy mids' };
+  if (harshness >= 42) return { range: '2k–5k', mainIssue: 'harshness / ear fatigue', listenerFeeling: 'Upper mids feel sharp and tiring over time.', firstSafeFix: 'Apply a gentle cut in 2k–5k on harsh peaks.', avoid: 'Do not boost presence to chase detail.', markerLabel: '2k–5k harshness' };
+  if (sparkle < 14) return { range: '8k–12k', mainIssue: 'dull top end / missing sparkle', listenerFeeling: 'Top end feels closed and less exciting.', firstSafeFix: 'Add a very gentle top lift only after low-mid cleanup.', avoid: 'Do not over-brighten with a big high shelf.', markerLabel: '8k–12k missing sparkle' };
+  return null;
 }
 
 
@@ -432,6 +455,7 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   const channels = result.channels ?? 0;
   const low = result.lowPercent;
   const clippingCount = result.clippingCount ?? 0;
+  const frequencyIssue = detectFrequencyIssue(result);
 
   if (typeof peak === 'number' && peak > -1) {
     wrong.push('The loudest peaks are too hot.');
@@ -458,6 +482,12 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
     wrong.push('There is too much low-end buildup.');
     matters.push('Boomy bass can hide vocals and detail.');
     first.push('Gently reduce muddy lows. Listen for clearer vocals and tighter bass. Stop when the mix feels balanced, not thin.');
+  }
+  if (frequencyIssue) {
+    wrong.push(`Main frequency issue: ${frequencyIssue.range} (${frequencyIssue.mainIssue}).`);
+    matters.push(`Listener impact: ${frequencyIssue.listenerFeeling}`);
+    first.push(frequencyIssue.firstSafeFix);
+    avoid.push(frequencyIssue.avoid);
   }
 
   if (channels === 1) avoid.push('Do not force wide stereo effects if mono is intentional.');
@@ -613,6 +643,7 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
   const peak = result.peakDb;
   const clippingCount = result.clippingCount ?? 0;
   const isMono = channels === 1;
+  const frequencyIssue = detectFrequencyIssue(result);
   if (sourceQuality) {
     hearing.push(`Source quality looks like: ${sourceQuality.rating}.`);
     why.push(sourceQuality.note);
@@ -652,6 +683,11 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     hearing.push('There may be audible crackle or harsh distortion on peaks.');
     why.push('Clipping was detected in the waveform.');
     next.push('Back off limiting or gain, then export again and verify clipping is gone.');
+  }
+  if (frequencyIssue) {
+    hearing.push(`Main frequency issue: ${frequencyIssue.range} feels like ${frequencyIssue.mainIssue}.`);
+    why.push(`This creates ${frequencyIssue.listenerFeeling.toLowerCase()}`);
+    next.push(frequencyIssue.firstSafeFix);
   }
 
   const healthy = hearing.length === 0;
@@ -797,6 +833,7 @@ export default function App() {
   const sourceQuality = useMemo(() => assessSourceQuality(result, fileName), [result, fileName]);
   const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality) : null;
   const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality) : null;
+  const frequencyFeel = result ? detectFrequencyIssue(result) : null;
 
   const listeningCoach = autoFixPlan ? {
     quickSummary: autoFixPlan.wrong.slice(0, 3),
@@ -916,6 +953,15 @@ export default function App() {
   const combinedProblemMarkers = useMemo(
     () => [
       ...autoMarkers,
+      ...(frequencyFeel ? [{
+        id: `freq-${frequencyFeel.markerLabel}`,
+        label: frequencyFeel.markerLabel,
+        timeSec: 0,
+        color: 'yellow' as const,
+        explanation: `${frequencyFeel.mainIssue}. ${frequencyFeel.firstSafeFix}`,
+        estimated: true,
+        kind: 'estimated' as const
+      }] : []),
       ...manualProblemAreas.map((p) => ({
         id: p.id,
         label: 'Custom problem area',
@@ -927,7 +973,7 @@ export default function App() {
         endSec: p.endSec
       }))
     ],
-    [autoMarkers, manualProblemAreas]
+    [autoMarkers, manualProblemAreas, frequencyFeel]
   );
   const isBeginnerMode = appMode === 'beginner';
   const isCreatorMode = appMode === 'creator';
@@ -964,6 +1010,7 @@ export default function App() {
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
   <section className="guidance"><h2>🛠 How to fix it</h2>{fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>}</section>
   <section className="guidance frequency-balance"><h2>Frequency Balance</h2>{frequencyBands.length ? <><p>{frequencyBalanceSummary}</p><div className="frequency-grid">{frequencyBands.map((band) => <div key={band.label} className="frequency-row"><div className="frequency-row-head"><strong>{band.label} <span>({band.range})</span></strong><span className={`pill ${band.status === 'green' ? 'good' : band.status === 'yellow' ? 'warn' : 'bad'}`}>{band.energy.toFixed(0)}%</span></div><div className="frequency-meter" role="img" aria-label={`${band.label} energy ${band.energy.toFixed(0)} percent`}><div className={`frequency-fill ${band.status}`} style={{ width: `${band.energy}%` }} /></div><p>{band.humanWording}</p></div>)}</div></> : <p className="empty">Run analysis to see frequency distribution.</p>}</section>
+  <section className="guidance"><h2>Frequency Feel</h2>{frequencyFeel ? <><p><strong>Main frequency issue:</strong> {frequencyFeel.range} too strong</p><p><strong>What it feels like:</strong> {frequencyFeel.listenerFeeling}</p><p><strong>First safe fix:</strong> {frequencyFeel.firstSafeFix}</p><p><strong>What NOT to do:</strong> {frequencyFeel.avoid}</p></> : <p className="empty">No dominant frequency problem detected.</p>}</section>
 
 
   <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} balance={{ low: result?.lowPercent ?? 0, high: result?.highPercent ?? 0 }} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
@@ -984,7 +1031,7 @@ export default function App() {
 
   {isCreatorMode ? <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based estimate only.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High rough balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Low/Mid/High verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section> : null}
 
-  <ReleaseChecklist result={result} autoMarkerCount={autoMarkers.length} />
+  <ReleaseChecklist result={result} autoMarkerCount={combinedProblemMarkers.length} />
 
 
   {isBeginnerMode ? <section className="guidance priority-fix"><h2>🎧 Listening Coach — What to Fix First</h2>{priorityFix ? <><h3>{priorityFix.title}</h3><p>{priorityFix.message}</p></> : <p className="empty">Run analysis to see your highest-priority fix.</p>}</section> : null}<section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you're hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section>
