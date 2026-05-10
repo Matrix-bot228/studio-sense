@@ -377,6 +377,10 @@ type AppMode = 'beginner' | 'creator';
 type FrequencyBandStatus = 'green' | 'yellow' | 'red';
 type FrequencyBandRow = { label: string; range: string; energy: number; status: FrequencyBandStatus; humanWording: string };
 type FrequencyIssue = { range: string; mainIssue: string; listenerFeeling: string; firstSafeFix: string; avoid: string; markerLabel: string };
+type IntentGenre = 'Auto / Not sure' | 'Blues' | 'Reggae' | 'Hard Rock' | 'Pop' | 'Hip Hop' | 'EDM' | 'Acoustic' | 'Jazz' | 'Gospel' | 'Lo-fi' | 'Podcast / Voice' | 'Archival / Restoration' | 'AI Music / Suno';
+type IntentOutcome = 'Spotify / streaming release' | 'YouTube upload' | 'Demo mix' | 'Improve clarity' | 'Preserve vintage character' | 'Restoration / archival listenability' | 'AI music cleanup' | 'Reference check only';
+type UserIntent = { genre: IntentGenre; outcome: IntentOutcome; description: string };
+const DEFAULT_USER_INTENT: UserIntent = { genre: 'Auto / Not sure', outcome: 'Spotify / streaming release', description: '' };
 
 function clampPercent(value: number): number { return Math.max(0, Math.min(100, value)); }
 function bandStatus(value: number, yellowAt: number, redAt: number): FrequencyBandStatus {
@@ -590,7 +594,7 @@ function buildContextAwareRecommendations(result: AnalysisResult) {
   return { recommendations, confidence, isMono, balancedTone, sourceLooksOldOrLowFi, clippingCount, lufs, rms };
 }
 
-function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
+function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null, userIntent: UserIntent): { wrong: string[]; matters: string[]; first: string[]; listenFor: string[]; avoid: string[]; readiness: string[]; sourceQuality: string[] } {
   const wrong: string[] = [];
   const matters: string[] = [];
   const first: string[] = [];
@@ -653,11 +657,13 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   if (channels === 1) avoid.push('Preserve mono compatibility unless widening is intentional.');
   if (typeof rms === 'number' && rms < -21) avoid.push('Avoid aggressive compression because artifacts will become more obvious.');
   if (!avoid.length) avoid.push('Do not chase loudness before peak safety and clipping are clean.');
+  if (userIntent.outcome === 'Preserve vintage character') avoid.push('Avoid over-cleaning, over-brightening, and over-limiting.');
 
   const readinessLabel = result.readiness ?? 'Needs Work';
   const scoreText = typeof result.score === 'number' ? `${Math.round(result.score)} / 100` : 'not scored yet';
   if (sourceQuality) sourceQualityNotes.push(`Source quality: ${sourceQuality.rating}. ${sourceQuality.note}`);
   readiness.push(`Current release readiness: ${readinessLabel} (${scoreText}).`);
+  if (userIntent.outcome === 'Restoration / archival listenability') readiness.push('This can likely be improved, but modern commercial clarity may not be possible if detail was not captured in the source.');
 
   if (analysisState?.majorProblem && result.readiness === 'Release Ready') {
     readiness[0] = 'Current release readiness: Needs Work (major tonal/loudness issues detected).';
@@ -801,7 +807,7 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
   };
 }
 
-function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
+function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQualityAssessment | null, analysisState: CentralAnalysisState | null, userIntent: UserIntent): { hearing: string[]; why: string[]; next: string[]; healthy: boolean } {
   const hearing: string[] = [];
   const why: string[] = [];
   const next: string[] = [];
@@ -842,9 +848,14 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
   }
   const bassMaskingClarity = typeof low === 'number' && low > 44;
   if (bassMaskingClarity) {
-    hearing.push('The bass feels heavy and can get boomy.');
-    why.push('Too much spectral energy is concentrated in the low frequencies.');
-    next.push('Reduce muddy low frequencies with subtractive EQ and tighten the low-end dynamics.');
+    if (userIntent.genre === 'Reggae') {
+      hearing.push('Bass presence fits reggae, but check if it masks clarity.');
+      why.push('Strong low-end is expected in reggae, but vocal detail can still be masked.');
+    } else {
+      hearing.push('The bass feels heavy and can get boomy.');
+      why.push('Too much spectral energy is concentrated in the low frequencies.');
+      next.push('Reduce muddy low frequencies with subtractive EQ and tighten the low-end dynamics.');
+    }
   }
   if (typeof peak === 'number' && peak > -1) {
     hearing.push('The loudest moments are very close to distortion.');
@@ -871,6 +882,11 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     why.push('Loudness, peak headroom, stereo format, and tonal balance are internally consistent.');
     next.push('Do a final reference check, then export your release master.');
   }
+  if (userIntent.genre === 'Blues' || userIntent.genre === 'Jazz') next.push('Preserve warmth and dynamics; avoid over-brightening.');
+  if (userIntent.genre === 'Lo-fi') next.push('Focus on whether the lo-fi texture feels pleasant, not perfectly clean.');
+  if (userIntent.genre === 'Hard Rock') next.push('Focus on vocal clarity, harsh cymbals, and guitar masking.');
+  if (userIntent.genre === 'Archival / Restoration') next.push('Focus on preservation and clarity, not modern polish.');
+  if (userIntent.genre === 'AI Music / Suno') next.push('Check for low-end rumble, metallic highs, smeared vocals, fake stereo width, and over-limiting.');
 
   return { hearing, why, next, healthy };
 }
@@ -900,6 +916,7 @@ export default function App() {
   const [listeningCoachingModeEnabled, setListeningCoachingModeEnabled] = useState(true);
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
   const [appMode, setAppMode] = useState<AppMode>('beginner');
+  const [userIntent, setUserIntent] = useState<UserIntent>(DEFAULT_USER_INTENT);
   const workerRef = useRef<Worker | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
   const requestIdRef = useRef(0);
@@ -1007,9 +1024,20 @@ export default function App() {
   const hasAnalyzedTrack = Boolean(result);
   const sourceQuality = useMemo(() => assessSourceQuality(result, fileName), [result, fileName]);
   const analysisState = useMemo(() => getCentralAnalysisState(result), [result]);
-  const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality, analysisState) : null;
-  const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality, analysisState) : null;
+  const plainEnglishSummary = result ? buildPlainEnglishSummary(result, sourceQuality, analysisState, userIntent) : null;
+  const autoFixPlan = result ? buildAutoFixPlan(result, sourceQuality, analysisState, userIntent) : null;
   const frequencyFeel = result ? detectFrequencyIssue(result) : null;
+  const intentAwareCoach = useMemo(() => {
+    if (!result) return null;
+    const goal = `${userIntent.genre} / ${userIntent.outcome}`;
+    return {
+      goal,
+      matters: userIntent.outcome === 'Spotify / streaming release' ? 'Keep loudness, peak safety, and translation strict for release readiness.' : userIntent.outcome === 'Restoration / archival listenability' ? 'Prioritize preservation and listenability with realistic source limits.' : 'Prioritize clarity and musical translation for your selected outcome.',
+      fixFirst: userIntent.genre === 'AI Music / Suno' ? 'Fix artificial low-end buildup, metallic top-end, and smeared vocals first.' : userIntent.genre === 'Archival / Restoration' ? 'Fix intelligibility and reduce distracting artifacts before any loudness push.' : 'Fix peaks/clipping first, then loudness, then tone.',
+      avoid: userIntent.outcome === 'Preserve vintage character' ? 'Avoid over-cleaning, over-brightening, and over-limiting.' : userIntent.genre === 'Lo-fi' ? 'Do not remove hiss/softness automatically if the texture is intentional.' : 'Avoid large changes; use small moves and re-check each step.',
+      realistic: userIntent.outcome === 'Restoration / archival listenability' ? 'This can likely be improved, but modern commercial clarity may not be possible if detail was not captured in the source.' : userIntent.genre === 'Archival / Restoration' ? 'Aim for clear, stable playback rather than modern polish.' : userIntent.genre === 'AI Music / Suno' ? 'Given your AI music goal, check for artificial low-end buildup, harsh top-end texture, and over-compression before release.' : `Given your ${userIntent.genre.toLowerCase()}/${userIntent.outcome.toLowerCase()} goal, preserve musical intent while improving translation.`
+    };
+  }, [result, userIntent]);
 
   const listeningCoach = autoFixPlan ? {
     quickSummary: autoFixPlan.wrong.slice(0, 3),
@@ -1181,6 +1209,18 @@ export default function App() {
     </div>
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+  <section className="guidance">
+    <h2>Tell Studio Sense what you’re trying to achieve</h2>
+    <div className="workflow-row">
+      <select value={userIntent.genre} onChange={(e) => setUserIntent((prev) => ({ ...prev, genre: e.target.value as IntentGenre }))}>
+        {['Auto / Not sure', 'Blues', 'Reggae', 'Hard Rock', 'Pop', 'Hip Hop', 'EDM', 'Acoustic', 'Jazz', 'Gospel', 'Lo-fi', 'Podcast / Voice', 'Archival / Restoration', 'AI Music / Suno'].map((x) => <option key={x} value={x}>{x}</option>)}
+      </select>
+      <select value={userIntent.outcome} onChange={(e) => setUserIntent((prev) => ({ ...prev, outcome: e.target.value as IntentOutcome }))}>
+        {['Spotify / streaming release', 'YouTube upload', 'Demo mix', 'Improve clarity', 'Preserve vintage character', 'Restoration / archival listenability', 'AI music cleanup', 'Reference check only'].map((x) => <option key={x} value={x}>{x}</option>)}
+      </select>
+    </div>
+    <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
+  </section>
 
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
@@ -1202,6 +1242,7 @@ export default function App() {
   <section className="guidance"><h2>🎛 Mastering suggestion</h2><p>{buildTopMasteringSuggestion(result)}</p></section>
   <section className="guidance frequency-balance"><h2>Frequency Balance</h2>{frequencyBands.length ? <><p>{frequencyBalanceSummary}</p><div className="frequency-grid">{frequencyBands.map((band) => <div key={band.label} className="frequency-row"><div className="frequency-row-head"><strong>{band.label} <span>({band.range})</span></strong><span className={`pill ${band.status === 'green' ? 'good' : band.status === 'yellow' ? 'warn' : 'bad'}`}>{band.energy.toFixed(0)}%</span></div><div className="frequency-meter" role="img" aria-label={`${band.label} energy ${band.energy.toFixed(0)} percent`}><div className={`frequency-fill ${band.status}`} style={{ width: `${band.energy}%` }} /></div><p>{band.humanWording}</p></div>)}</div></> : <p className="empty">Run analysis to see frequency distribution.</p>}</section>
   <section className="guidance"><h2>Frequency Feel</h2>{frequencyFeel ? <><p><strong>Main frequency issue:</strong> {frequencyFeel.range} {frequencyFeel.range === '8k–12k' ? 'too weak' : 'too strong'}</p><p><strong>What it feels like:</strong> {frequencyFeel.listenerFeeling}</p><p><strong>First safe fix:</strong> {frequencyFeel.firstSafeFix}</p><p><strong>What NOT to do:</strong> {frequencyFeel.avoid}</p></> : <p className="empty">No dominant frequency problem detected.</p>}</section>
+  <section className="guidance"><h2>Intent-Aware Coach</h2>{intentAwareCoach ? <><p><strong>What you’re aiming for:</strong> {intentAwareCoach.goal}{userIntent.description ? ` — ${userIntent.description}` : ''}</p><p><strong>What matters most for this goal:</strong> {intentAwareCoach.matters}</p><p><strong>What to fix first:</strong> {intentAwareCoach.fixFirst}</p><p><strong>What to avoid:</strong> {intentAwareCoach.avoid}</p><p><strong>Realistic outcome:</strong> {intentAwareCoach.realistic}</p></> : <p className="empty">Set your intent and run analysis for goal-aware coaching.</p>}</section>
 
 
   <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} balance={{ low: result?.lowPercent ?? 0, high: result?.highPercent ?? 0 }} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
@@ -1226,6 +1267,7 @@ export default function App() {
     result={result}
     autoMarkerCount={combinedProblemMarkers.length}
     frequencyIssueLabel={frequencyFeel ? `${frequencyFeel.range} ${frequencyFeel.range === '8k–12k' ? 'too weak' : 'too strong'}` : null}
+    intentOutcome={userIntent.outcome}
   />
 
 
