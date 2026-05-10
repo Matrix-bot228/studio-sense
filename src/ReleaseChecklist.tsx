@@ -19,6 +19,7 @@ type ReleaseChecklistProps = {
   result: AnalysisResult | null;
   autoMarkerCount: number;
   frequencyIssueLabel?: string | null;
+  intentOutcome?: string;
 };
 
 function itemDisplay(status: ChecklistStatus): { icon: ReactNode; className: string } {
@@ -27,7 +28,7 @@ function itemDisplay(status: ChecklistStatus): { icon: ReactNode; className: str
   return { icon: '❌', className: 'fail' };
 }
 
-export default function ReleaseChecklist({ result, autoMarkerCount, frequencyIssueLabel = null }: ReleaseChecklistProps) {
+export default function ReleaseChecklist({ result, autoMarkerCount, frequencyIssueLabel = null, intentOutcome = 'Spotify / streaming release' }: ReleaseChecklistProps) {
   if (!result) {
     return (
       <section className="release-checklist">
@@ -37,10 +38,11 @@ export default function ReleaseChecklist({ result, autoMarkerCount, frequencyIss
     );
   }
 
+  const strictStreaming = intentOutcome === 'Spotify / streaming release';
   const loudnessStatus: ChecklistStatus =
     typeof result.lufsEstimate === 'number' && result.lufsEstimate >= -15 && result.lufsEstimate <= -13
       ? 'pass'
-      : 'fail';
+      : strictStreaming ? 'fail' : 'warning';
 
   const peakStatus: ChecklistStatus =
     typeof result.peakDb === 'number' && result.peakDb <= -1 ? 'pass' : 'fail';
