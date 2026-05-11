@@ -1030,6 +1030,10 @@ export default function App() {
     }
   }, [runWorkerRequest]);
 
+  const handleClearIntent = useCallback(() => {
+    setUserIntent(DEFAULT_USER_INTENT);
+  }, []);
+
   const analyzeSelectedSection = useCallback(async () => {
     if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
     setLoading(true);
@@ -1249,6 +1253,9 @@ export default function App() {
     <div className="workflow-row">
       <button className="upload-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
         {analysisStatus === 'processing' ? 'Analyzing…' : 'Start Analysis'}
+      </button>
+      <button className="upload-btn secondary" type="button" onClick={handleClearIntent} disabled={loading || isAnalyzing}>
+        Clear
       </button>
     </div>
   </section>
