@@ -674,6 +674,12 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   const prioritizedFirst: string[] = [];
   for (const rec of adaptive.recommendations) { if (!seen.has(rec)) { prioritizedFirst.push(rec); seen.add(rec); } }
   for (const step of first) { if (!seen.has(step)) { prioritizedFirst.push(step); seen.add(step); } }
+  const description = userIntent.description.toLowerCase();
+  const prioritizeBass = /(bass|low[- ]?end|sub|kick|rumble|boom|boomy|muddy)/i.test(description);
+  const bassHint = /(bass|low[- ]?end|sub|kick|rumble|boom|boomy|muddy|120|150|200|350)/i;
+  if (prioritizeBass) {
+    prioritizedFirst.sort((a, b) => Number(bassHint.test(b)) - Number(bassHint.test(a)));
+  }
 
   if (!wrong.length) {
     wrong.push('No major issues were detected in the current analysis.');
@@ -906,7 +912,7 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
   const [analysisDebug, setAnalysisDebug] = useState<AnalysisDebug | null>(null);
-  const [status, setStatus] = useState('Upload audio to start analysis.');
+  const [status, setStatus] = useState('Select genre/outcome, describe your goal, then upload audio.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState('Idle');
@@ -970,7 +976,7 @@ export default function App() {
     const file = event.target.files?.[0] ?? null; if (!file) return;
     workerRef.current?.terminate();
     workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
-    setLoading(true); setIsAnalyzing(true); setFileName(file.name); setStatus('Analyzing…'); setAnalysisStatus('processing'); setAnalysisStage('Loading audio'); setLargeFileWarning('');
+    setLoading(true); setIsAnalyzing(false); setFileName(file.name); setStatus('Loading audio…'); setAnalysisStatus('idle'); setAnalysisStage('Idle'); setLargeFileWarning('');
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     setAnalysisDebug(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -987,22 +993,42 @@ export default function App() {
       const channels = Array.from({ length: decoded.numberOfChannels }, (_, i) => new Float32Array(decoded.getChannelData(i)));
       const workerData = { channels, sampleRate: decoded.sampleRate, durationSec: decoded.duration };
       audioDataRef.current = workerData;
-      setAnalysisStage('Reading waveform');
-      const transfer = channels.map((channel) => channel.buffer as Transferable);
-      const msg = await runWorkerRequest({ type: 'analyze', payload: workerData }, transfer);
-      if (msg.data.type !== 'done') throw new Error('Invalid worker response');
-      setResult(msg.data.result);
-      setAutoMarkers(msg.data.markers);
-      setAnalysisDebug(msg.data.debug ?? null);
-      if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
       setDuration(decoded.duration); setCurrentTime(0);
-      setStatus('Analysis complete');
-      setAnalysisStatus('complete');
+      if (channels[0] && channels[0].length > 44_100 * 60 * 6) setLargeFileWarning('Large file detected — analysis may take longer.');
+      setStatus('Audio loaded. Set your goal, then click Start Analysis.');
     } catch {
       setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null; setAnalysisDebug(null);
       setAnalysisStatus('failed');
     } finally { setLoading(false); setIsAnalyzing(false); event.target.value = ''; }
   }
+
+  const startAnalysis = useCallback(async () => {
+    if (!audioDataRef.current) return;
+    setLoading(true);
+    setIsAnalyzing(true);
+    setAnalysisStatus('processing');
+    setAnalysisStage('Reading waveform');
+    setStatus('Analyzing…');
+    setResult(null);
+    setAutoMarkers([]);
+    setAnalysisDebug(null);
+    try {
+      const msg = await runWorkerRequest({ type: 'analyze', payload: audioDataRef.current });
+      if (msg.data.type !== 'done') throw new Error('Invalid worker response');
+      setResult(msg.data.result);
+      setAutoMarkers(msg.data.markers);
+      setAnalysisDebug(msg.data.debug ?? null);
+      if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
+      setStatus('Analysis complete');
+      setAnalysisStatus('complete');
+    } catch {
+      setAnalysisStatus('failed');
+      setStatus('Analysis failed (playback may still work).');
+    } finally {
+      setLoading(false);
+      setIsAnalyzing(false);
+    }
+  }, [runWorkerRequest]);
 
   const analyzeSelectedSection = useCallback(async () => {
     if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
@@ -1208,7 +1234,7 @@ export default function App() {
       <button type="button" role="tab" aria-selected={isCreatorMode} className={`mode-toggle-btn ${isCreatorMode ? 'active' : ''}`} onClick={() => setAppMode('creator')}>Creator Mode</button>
     </div>
   </section>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : audioDataRef.current ? 'Audio loaded. Set your goal, then click Start Analysis.' : 'Upload audio to begin analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
   <section className="guidance">
     <h2>Tell Studio Sense what you’re trying to achieve</h2>
     <div className="workflow-row">
@@ -1220,6 +1246,11 @@ export default function App() {
       </select>
     </div>
     <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
+    <div className="workflow-row">
+      <button className="upload-btn" type="button" onClick={startAnalysis} disabled={!audioDataRef.current || loading}>
+        {analysisStatus === 'processing' ? 'Analyzing…' : 'Start Analysis'}
+      </button>
+    </div>
   </section>
 
   {audioUrl && <AudioPlayer
