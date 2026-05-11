@@ -1002,7 +1002,7 @@ export default function App() {
     } finally { setLoading(false); setIsAnalyzing(false); event.target.value = ''; }
   }
 
-  const startAnalysis = useCallback(async () => {
+  const handleStartAnalysis = useCallback(async () => {
     if (!audioDataRef.current) return;
     setLoading(true);
     setIsAnalyzing(true);
@@ -1247,7 +1247,7 @@ export default function App() {
     </div>
     <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
     <div className="workflow-row">
-      <button className="upload-btn" type="button" onClick={startAnalysis} disabled={!audioDataRef.current || loading}>
+      <button className="upload-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
         {analysisStatus === 'processing' ? 'Analyzing…' : 'Start Analysis'}
       </button>
     </div>
