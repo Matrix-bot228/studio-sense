@@ -1150,10 +1150,12 @@ export default function App() {
     return 'Your frequency balance looks controlled overall. Keep checking against a reference track.';
   }, [analysisState, frequencyBands, frequencyFeel, result]);
   const isFinalAnalysisReady = analysisStatus === 'complete' && Boolean(result) && Boolean(analysisState);
-  const soundProfile = isFinalAnalysisReady ? buildSoundProfile(analysisState) : 'Waiting for analysis';
-  const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : ['Run analysis to explain this recording.'];
+  const hasUploadedFile = Boolean(audioDataRef.current);
+  const awaitingAnalysis = hasUploadedFile && !analysisStarted;
+  const soundProfile = isFinalAnalysisReady ? buildSoundProfile(analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
+  const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : awaitingAnalysis ? ['Run analysis to explain the current sound character.'] : ['Run analysis to explain this recording.'];
   const fixSuggestions = isFinalAnalysisReady ? buildFixSuggestions(result) : [];
-  const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : 'Waiting for analysis';
+  const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
   const sourceConfidence = isFinalAnalysisReady ? detectSourceConfidence(result, fileName) : 'Waiting for analysis';
   const profileData = isFinalAnalysisReady ? {
     soundProfile,
@@ -1259,7 +1261,7 @@ export default function App() {
       </div>
       {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
       <div className="workflow-row">
-        <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || !userIntent.description.trim() || loading || isAnalyzing}>
+        <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
           {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Start Studio Sense Analysis'}
         </button>
       </div>
@@ -1275,6 +1277,10 @@ export default function App() {
         onTimeChange={setCurrentTime}
         onDurationChange={setDuration}
       /> : null}
+      <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p></section>
+      <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p></section>
+      <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
+      <section className="guidance"><h2>🛠 How to fix it</h2>{isFinalAnalysisReady ? (fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>) : <p>Run analysis first to generate a beginner-friendly fix plan.</p>}</section>
     </section>
   </>
   ) : (
