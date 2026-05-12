@@ -973,7 +973,7 @@ export default function App() {
     { label: 'Overall mastering suggestion', text: result?.masteringSuggestion, tone: toneForReadiness(result?.readiness) }
   ].filter((v) => Boolean(v.text)), [result]);
 
-  async function onFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+  async function handleFileUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0] ?? null; if (!file) return;
     workerRef.current?.terminate();
     workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
@@ -999,7 +999,7 @@ export default function App() {
       setStatus('Audio loaded. Set your goal, then click Start Analysis.');
     } catch {
       setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null; setAnalysisDebug(null);
-      setAnalysisStatus('failed');
+      setAnalysisStatus('idle');
     } finally { setLoading(false); setIsAnalyzing(false); event.target.value = ''; }
   }
 
@@ -1255,7 +1255,7 @@ export default function App() {
       <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
       <div className="workflow-row">
         <label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload Audio'}</label>
-        <input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} />
+        <input id="audio-upload" type="file" accept="audio/*" onChange={handleFileUpload} disabled={loading} />
       </div>
       {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
       <div className="workflow-row">
