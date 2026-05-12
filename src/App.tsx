@@ -1032,9 +1032,6 @@ export default function App() {
     }
   }, [runWorkerRequest]);
 
-  const handleClearIntent = useCallback(() => {
-    setUserIntent(DEFAULT_USER_INTENT);
-  }, []);
 
   const analyzeSelectedSection = useCallback(async () => {
     if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
@@ -1227,41 +1224,60 @@ export default function App() {
   );
   const isBeginnerMode = appMode === 'beginner';
   const isCreatorMode = appMode === 'creator';
-
+  const isPreAnalysis = !analysisStarted;
 
   return (
     <main className="app-shell">
       <section className="card compact">
-        <header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p><p className="subhead">Your beginner listening coach for understanding and improving music quality.</p></div><label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload audio'}</label><input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} /></header>
+        <header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p><p className="subhead">Your beginner listening coach for understanding and improving music quality.</p></div></header>
+  {isPreAnalysis ? (
+  <>
+    <section className="guidance pre-analysis-workflow">
+      <h2>Studio Sense Workflow</h2>
+      <ol>
+        <li>Step 1 — Choose Genre</li>
+        <li>Step 2 — Choose Target</li>
+        <li>Step 3 — Describe the issue</li>
+        <li>Step 4 — Upload audio</li>
+        <li>Step 5 — Start Analysis</li>
+      </ol>
+    </section>
+    <section className="guidance">
+      <h2>Tell Studio Sense what you’re trying to achieve</h2>
+      <div className="workflow-row">
+        <select value={userIntent.genre} onChange={(e) => setUserIntent((prev) => ({ ...prev, genre: e.target.value as IntentGenre }))}>
+          {['Auto / Not sure', 'Blues', 'Reggae', 'Hard Rock', 'Pop', 'Hip Hop', 'EDM', 'Acoustic', 'Jazz', 'Gospel', 'Lo-fi', 'Podcast / Voice', 'Archival / Restoration', 'AI Music / Suno'].map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <select value={userIntent.outcome} onChange={(e) => setUserIntent((prev) => ({ ...prev, outcome: e.target.value as IntentOutcome }))}>
+          {['Spotify / streaming release', 'YouTube upload', 'Demo mix', 'Improve clarity', 'Preserve vintage character', 'Restoration / archival listenability', 'AI music cleanup', 'Reference check only'].map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+      </div>
+      <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
+      <div className="workflow-row">
+        <label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload Audio'}</label>
+        <input id="audio-upload" type="file" accept="audio/*" onChange={onFileChange} disabled={loading} />
+      </div>
+      {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
+      <div className="workflow-row">
+        <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
+          {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Start Studio Sense Analysis'}
+        </button>
+      </div>
+      <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
+      {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+    </section>
+  </>
+  ) : (
+  <>
   <section className="mode-toggle-wrap" aria-label="Mode switch">
     <span className="mode-toggle-label">View mode</span>
     <div className="mode-toggle" role="tablist" aria-label="Beginner and creator mode">
-      <button type="button" role="tab" aria-selected={isBeginnerMode} className={`mode-toggle-btn ${isBeginnerMode ? 'active' : ''}`} onClick={() => setAppMode('beginner')}>Beginner Mode</button>
-      <button type="button" role="tab" aria-selected={isCreatorMode} className={`mode-toggle-btn ${isCreatorMode ? 'active' : ''}`} onClick={() => setAppMode('creator')}>Creator Mode</button>
+      <button type="button" role="tab" aria-selected={isBeginnerMode} className={`mode-toggle-btn ${isBeginnerMode ? "active" : ""}`} onClick={() => setAppMode("beginner")}>Beginner Mode</button>
+      <button type="button" role="tab" aria-selected={isCreatorMode} className={`mode-toggle-btn ${isCreatorMode ? "active" : ""}`} onClick={() => setAppMode("creator")}>Creator Mode</button>
     </div>
   </section>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? 'info' : 'good'}`}>{loading ? 'Processing' : 'Ready'}</span></section><p className="status">{status}</p>{isAnalyzing ? <p className="status">Analyzing…</p> : null}<p className="status">{analysisStatus === 'processing' ? `Analyzing audio… please wait (${analysisStage})` : analysisStatus === 'complete' ? 'Analysis complete' : analysisStatus === 'failed' ? 'Analysis failed (playback may still work).' : audioDataRef.current ? 'Audio loaded. Set your goal, then click Start Analysis.' : 'Set your goal, upload audio, then click Start Analysis.'}</p>{largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
-  <section className="guidance">
-    <h2>Tell Studio Sense what you’re trying to achieve</h2>
-    <div className="workflow-row">
-      <select value={userIntent.genre} onChange={(e) => setUserIntent((prev) => ({ ...prev, genre: e.target.value as IntentGenre }))}>
-        {['Auto / Not sure', 'Blues', 'Reggae', 'Hard Rock', 'Pop', 'Hip Hop', 'EDM', 'Acoustic', 'Jazz', 'Gospel', 'Lo-fi', 'Podcast / Voice', 'Archival / Restoration', 'AI Music / Suno'].map((x) => <option key={x} value={x}>{x}</option>)}
-      </select>
-      <select value={userIntent.outcome} onChange={(e) => setUserIntent((prev) => ({ ...prev, outcome: e.target.value as IntentOutcome }))}>
-        {['Spotify / streaming release', 'YouTube upload', 'Demo mix', 'Improve clarity', 'Preserve vintage character', 'Restoration / archival listenability', 'AI music cleanup', 'Reference check only'].map((x) => <option key={x} value={x}>{x}</option>)}
-      </select>
-    </div>
-    <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
-    <div className="workflow-row">
-      <button className="upload-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
-        {analysisStatus === 'processing' ? 'Analyzing…' : 'Start Analysis'}
-      </button>
-      <button className="upload-btn secondary" type="button" onClick={handleClearIntent} disabled={loading || isAnalyzing}>
-        Clear
-      </button>
-    </div>
-  </section>
-
+  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
+  <p className="status">{analysisStatus === "processing" ? `Studio Sense is analyzing your recording... (${analysisStage})` : analysisStatus === "complete" ? "Analysis complete" : analysisStatus === "failed" ? "Analysis failed (playback may still work)." : "Audio loaded. Set your goal, then click Start Analysis."}</p>
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
     startSec={startSec}
@@ -1271,8 +1287,7 @@ export default function App() {
     onSeekHandled={() => setSeekToSec(null)}
     onTimeChange={setCurrentTime}
     onDurationChange={setDuration}
-  />} 
-
+  />}
 
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p></> : null}</section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
@@ -1320,6 +1335,8 @@ export default function App() {
   {isCreatorMode ? <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section> : null}
 
   <section className="guidance"><h2>Listening Coach Plan</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Build Listening Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🎧 WHAT TO LISTEN FOR</h3><ul><li>Does it feel as loud as other songs?</li><li>Does the bass feel full but not heavy?</li><li>Do vocals/instruments stay clear?</li><li>Do loud parts stay clean without crunch or distortion?</li></ul><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “Build Listening Coach Plan” for a structured listening coach plan.</p>}</section>
+  </>
+  )}
       </section>
     </main>
   );
