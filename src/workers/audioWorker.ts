@@ -181,18 +181,25 @@ function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return 
 
 self.onmessage = (event: MessageEvent) => {
   const { type, payload, requestId } = event.data;
-  if (type === 'analyze') {
-    const { channels, sampleRate, durationSec } = payload;
-    self.postMessage({ type: 'stage', stage: 'Reading full track waveform', requestId });
-    const { result, debug } = analyzeRange(channels, sampleRate, 0, durationSec);
-    console.log('[StudioSense][debug]', debug);
-    const markers = buildProblemMarkers(result);
-    self.postMessage({ type: 'done', result, markers, debug, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES, requestId });
-  }
-  if (type === 'analyzeSection') {
-    const { channels, sampleRate, startSec, endSec } = payload;
-    const { result: sectionResult, debug } = analyzeRange(channels, sampleRate, startSec, endSec);
-    console.log('[StudioSense][section-debug]', debug);
-    self.postMessage({ type: 'sectionDone', sectionResult, debug, requestId });
+  try {
+    if (type === 'analyze') {
+      const { channels, sampleRate, durationSec } = payload;
+      self.postMessage({ type: 'stage', stage: 'Reading full track waveform', requestId });
+      const { result, debug } = analyzeRange(channels, sampleRate, 0, durationSec);
+      console.log('[StudioSense][debug]', debug);
+      const markers = buildProblemMarkers(result);
+      self.postMessage({ type: 'done', result, markers, debug, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES, requestId });
+      return;
+    }
+    if (type === 'analyzeSection') {
+      const { channels, sampleRate, startSec, endSec } = payload;
+      const { result: sectionResult, debug } = analyzeRange(channels, sampleRate, startSec, endSec);
+      console.log('[StudioSense][section-debug]', debug);
+      self.postMessage({ type: 'sectionDone', sectionResult, debug, requestId });
+      return;
+    }
+    self.postMessage({ type: 'error', error: `Unknown worker request type: ${String(type)}`, requestId });
+  } catch (error) {
+    self.postMessage({ type: 'error', error: error instanceof Error ? error.message : 'Unknown analysis failure', requestId });
   }
 };

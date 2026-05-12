@@ -207,6 +207,12 @@ type WorkerRequest =
   | { type: 'analyze'; payload: WorkerAudioData }
   | { type: 'analyzeSection'; payload: WorkerAudioData & { startSec: number; endSec: number } };
 
+type WorkerStageMessage = { type: 'stage'; stage: string; requestId: number };
+type WorkerDoneMessage = { type: 'done'; result: AnalysisResult; markers: ProblemMarker[]; debug?: AnalysisDebug | null; isLargeFile?: boolean; requestId: number };
+type WorkerSectionDoneMessage = { type: 'sectionDone'; sectionResult: AnalysisResult; debug?: AnalysisDebug | null; requestId: number };
+type WorkerErrorMessage = { type: 'error'; error?: string; requestId: number };
+type WorkerResponseMessage = WorkerStageMessage | WorkerDoneMessage | WorkerSectionDoneMessage | WorkerErrorMessage;
+
 type SourceContext = {
   isWav: boolean;
   isCompressed: boolean;
@@ -937,22 +943,28 @@ export default function App() {
     };
   }, []);
 
-  const runWorkerRequest = useCallback((request: WorkerRequest, transfer: Transferable[] = []) => new Promise<MessageEvent>((resolve, reject) => {
+  const runWorkerRequest = useCallback((request: WorkerRequest, transfer: Transferable[] = []) => new Promise<WorkerResponseMessage>((resolve, reject) => {
     const worker = workerRef.current;
     if (!worker) {
       reject(new Error('Worker unavailable'));
       return;
     }
     const requestId = ++requestIdRef.current;
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = (event: MessageEvent<WorkerResponseMessage>) => {
       if (event.data?.requestId !== requestId) return;
       if (event.data.type === 'stage') {
         setAnalysisStage(event.data.stage);
         return;
       }
+      if (event.data.type === 'error') {
+        worker.removeEventListener('message', handleMessage);
+        worker.removeEventListener('error', handleError);
+        reject(new Error(event.data.error ?? 'Worker failed'));
+        return;
+      }
       worker.removeEventListener('message', handleMessage);
       worker.removeEventListener('error', handleError);
-      resolve(event);
+      resolve(event.data);
     };
     const handleError = () => {
       worker.removeEventListener('message', handleMessage);
@@ -1016,16 +1028,18 @@ export default function App() {
     setAnalysisDebug(null);
     try {
       const msg = await runWorkerRequest({ type: 'analyze', payload: audioDataRef.current });
-      if (msg.data.type !== 'done') throw new Error('Invalid worker response');
-      setResult(msg.data.result);
-      setAutoMarkers(msg.data.markers);
-      setAnalysisDebug(msg.data.debug ?? null);
-      if (msg.data.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
+      if (msg.type !== 'done') throw new Error('Invalid worker response');
+      setResult(msg.result);
+      setAutoMarkers(msg.markers);
+      setAnalysisDebug(msg.debug ?? null);
+      if (msg.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
       setStatus('Analysis complete');
+      setAnalysisStage('Complete');
       setAnalysisStatus('complete');
     } catch {
       setAnalysisStatus('failed');
-      setStatus('Analysis failed (playback may still work).');
+      setAnalysisStage('Idle');
+      setStatus('Analysis failed. Please try another audio file.');
     } finally {
       setLoading(false);
       setIsAnalyzing(false);
@@ -1039,7 +1053,7 @@ export default function App() {
     setIsAnalyzing(true);
     await runWorkerRequest({ type: 'analyzeSection', payload: { ...audioDataRef.current, startSec: startSec ?? 0, endSec: endSec ?? 0 } })
       .then((msg) => {
-        if (msg.data.type === 'sectionDone') setSectionResult(msg.data.sectionResult);
+        if (msg.type === 'sectionDone') setSectionResult(msg.sectionResult);
       })
       .finally(() => { setLoading(false); setIsAnalyzing(false); });
   }, [hasSelection, startSec, endSec, runWorkerRequest]);
