@@ -1259,12 +1259,22 @@ export default function App() {
       </div>
       {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
       <div className="workflow-row">
-        <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
+        <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || !userIntent.description.trim() || loading || isAnalyzing}>
           {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Start Studio Sense Analysis'}
         </button>
       </div>
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+      {audioUrl ? <AudioPlayer
+        audioUrl={audioUrl}
+        startSec={startSec}
+        endSec={endSec}
+        timelineMarkers={combinedProblemMarkers}
+        seekToSec={seekToSec}
+        onSeekHandled={() => setSeekToSec(null)}
+        onTimeChange={setCurrentTime}
+        onDurationChange={setDuration}
+      /> : null}
     </section>
   </>
   ) : (
