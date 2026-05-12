@@ -951,28 +951,57 @@ export default function App() {
       reject(new Error('Worker unavailable'));
       return;
     }
+
     const requestId = ++requestIdRef.current;
-    const handleMessage = (event: MessageEvent<WorkerResponseMessage>) => {
-      if (event.data?.requestId !== requestId) return;
-      if (event.data.type === 'stage') {
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Worker request timed out after 60 seconds'));
+    }, 60_000);
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      worker.removeEventListener('message', handleMessage);
+      worker.removeEventListener('error', handleError);
+    };
+
+    const handleMessage = (event: MessageEvent<any>) => {
+      console.log('Worker message received', event.data);
+      if (event.data?.type === 'stage') {
         setAnalysisStage(event.data.stage);
         return;
       }
-      if (event.data.type === 'error') {
-        worker.removeEventListener('message', handleMessage);
-        worker.removeEventListener('error', handleError);
-        reject(new Error(event.data.error ?? 'Worker failed'));
+      if (event.data?.requestId !== undefined && event.data.requestId !== requestId) return;
+
+      if (event.data?.type === 'error' || event.data?.type === 'failed') {
+        cleanup();
+        reject(new Error(event.data?.error ?? event.data?.message ?? 'Worker failed'));
         return;
       }
-      worker.removeEventListener('message', handleMessage);
-      worker.removeEventListener('error', handleError);
-      resolve(event.data);
+
+      if (event.data?.type === 'done' || event.data?.type === 'sectionDone') {
+        cleanup();
+        resolve(event.data as WorkerResponseMessage);
+        return;
+      }
+
+      if (event.data?.result) {
+        cleanup();
+        resolve({
+          type: 'done',
+          result: event.data.result,
+          markers: event.data.markers ?? [],
+          debug: event.data.debug ?? null,
+          isLargeFile: event.data.isLargeFile ?? false,
+          requestId
+        });
+      }
     };
+
     const handleError = () => {
-      worker.removeEventListener('message', handleMessage);
-      worker.removeEventListener('error', handleError);
+      cleanup();
       reject(new Error('Worker failed'));
     };
+
     worker.addEventListener('message', handleMessage);
     worker.addEventListener('error', handleError);
     worker.postMessage({ ...request, requestId }, transfer);
