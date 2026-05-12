@@ -912,7 +912,7 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [autoMarkers, setAutoMarkers] = useState<ProblemMarker[]>([]);
   const [analysisDebug, setAnalysisDebug] = useState<AnalysisDebug | null>(null);
-  const [status, setStatus] = useState('Select genre/outcome, describe your goal, then upload audio.');
+  const [status, setStatus] = useState('Tell Studio Sense what you want to achieve, then upload audio.');
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'processing' | 'complete' | 'failed'>('idle');
   const [analysisStarted, setAnalysisStarted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -996,7 +996,7 @@ export default function App() {
       audioDataRef.current = workerData;
       setDuration(decoded.duration); setCurrentTime(0);
       if (channels[0] && channels[0].length > 44_100 * 60 * 6) setLargeFileWarning('Large file detected — analysis may take longer.');
-      setStatus('Audio loaded. Set your goal, then click Start Analysis.');
+      setStatus('Audio loaded. Review your goal, then click Analyze with Studio Sense.');
     } catch {
       setResult(null); setAudioBuffer(null); setStatus('Audio ready for playback'); audioDataRef.current = null; setAnalysisDebug(null);
       setAnalysisStatus('idle');
@@ -1241,7 +1241,7 @@ export default function App() {
         <li>Step 2 — Choose Target</li>
         <li>Step 3 — Describe the issue</li>
         <li>Step 4 — Upload audio</li>
-        <li>Step 5 — Start Analysis</li>
+        <li>Step 5 — Analyze with Studio Sense</li>
       </ol>
     </section>
     <section className="guidance">
@@ -1262,7 +1262,7 @@ export default function App() {
       {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
       <div className="workflow-row">
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
-          {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Start Studio Sense Analysis'}
+          {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Analyze with Studio Sense'}
         </button>
       </div>
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
@@ -1293,7 +1293,7 @@ export default function App() {
     </div>
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
-  <p className="status">{analysisStatus === "processing" ? `Studio Sense is analyzing your recording... (${analysisStage})` : analysisStatus === "complete" ? "Analysis complete" : analysisStatus === "failed" ? "Analysis failed (playback may still work)." : "Audio loaded. Set your goal, then click Start Analysis."}</p>
+  <p className="status">{analysisStatus === "processing" ? `Studio Sense is analyzing your recording... (${analysisStage})` : analysisStatus === "complete" ? "Analysis complete" : analysisStatus === "failed" ? "Analysis failed (playback may still work)." : "Audio loaded. Review your goal, then click Analyze with Studio Sense."}</p>
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
     startSec={startSec}
