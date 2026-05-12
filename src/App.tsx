@@ -213,6 +213,8 @@ type WorkerSectionDoneMessage = { type: 'sectionDone'; sectionResult: AnalysisRe
 type WorkerErrorMessage = { type: 'error'; error?: string; requestId: number };
 type WorkerResponseMessage = WorkerStageMessage | WorkerDoneMessage | WorkerSectionDoneMessage | WorkerErrorMessage;
 
+const ANALYSIS_TIMEOUT_MS = 60_000;
+
 type SourceContext = {
   isWav: boolean;
   isCompressed: boolean;
@@ -1017,6 +1019,7 @@ export default function App() {
 
   const handleStartAnalysis = useCallback(async () => {
     if (!audioDataRef.current) return;
+    console.log('Starting manual analysis');
     setAnalysisStarted(true);
     setLoading(true);
     setIsAnalyzing(true);
@@ -1027,18 +1030,33 @@ export default function App() {
     setAutoMarkers([]);
     setAnalysisDebug(null);
     try {
-      const msg = await runWorkerRequest({ type: 'analyze', payload: audioDataRef.current });
+      const msg = await Promise.race([
+        runWorkerRequest({ type: 'analyze', payload: audioDataRef.current }),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error('Analysis timeout')), ANALYSIS_TIMEOUT_MS);
+        })
+      ]);
+      console.log('Worker message received', msg);
       if (msg.type !== 'done') throw new Error('Invalid worker response');
-      setResult(msg.result);
+      const finalResult = msg.result ?? null;
+      if (!finalResult) throw new Error('No final analysis result returned');
+      console.log('Final analysis result', finalResult);
+      setResult(finalResult);
       setAutoMarkers(msg.markers);
       setAnalysisDebug(msg.debug ?? null);
       if (msg.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
-      setStatus('Analysis complete');
-      setAnalysisStage('Complete');
       setAnalysisStatus('complete');
-    } catch {
+      setAnalysisStage('idle');
+      setIsAnalyzing(false);
+      setLoading(false);
+      setStatus('Analysis complete');
+      setAnalysisStarted(true);
+    } catch (error) {
+      console.log('Analysis failed', error);
       setAnalysisStatus('failed');
-      setAnalysisStage('Idle');
+      setAnalysisStage('idle');
+      setIsAnalyzing(false);
+      setLoading(false);
       setStatus('Analysis failed. Please try another audio file.');
     } finally {
       setLoading(false);
