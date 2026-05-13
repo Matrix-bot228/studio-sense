@@ -41,8 +41,8 @@ const SAFE_PEAK_DBFS = -1;
 const LARGE_FILE_SAMPLES = 44_100 * 60 * 6;
 const QUICK_ANALYSIS_TARGET_WINDOWS = 48;
 const QUICK_ANALYSIS_WINDOW_SEC = 2.5;
-const QUICK_MAX_ANALYSIS_SAMPLES = 60_000;
-const QUICK_MAX_SPECTRUM_FRAMES = 120;
+const QUICK_MAX_ANALYSIS_SAMPLES = 40_000;
+const QUICK_MAX_SPECTRUM_FRAMES = 80;
 
 function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
 
@@ -192,7 +192,10 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
 
   const frameStep = Math.max(128, Math.floor(totalSamples / QUICK_MAX_ANALYSIS_SAMPLES));
   const spectrumWindow = 1024;
+  const maxSpectrumFrames: number = QUICK_MAX_SPECTRUM_FRAMES;
   const spectrumHop = Math.max(sampleRate * 2, Math.floor(totalSamples / QUICK_MAX_SPECTRUM_FRAMES));
+  const sampleWindow = Math.min(totalSamples, Math.max(spectrumWindow, frameStep * 8));
+  const analysisFrames = Math.max(1, Math.floor((totalSamples - sampleWindow) / frameStep) + 1);
   let peak = 0;
   let clippingCount = 0;
   let energy = 0;
@@ -201,22 +204,30 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
   let sumSub = 0; let sumBass = 0; let sumLowMids = 0; let sumMids = 0; let sumPresence = 0; let sumAir = 0;
   let spectrumFrames = 0;
 
-  for (let i = 0; i < totalSamples; i += frameStep) {
+  for (let frame = 0; frame < analysisFrames; frame += 1) {
+    const base = analysisFrames === 1 ? 0 : Math.floor((frame * (totalSamples - sampleWindow)) / Math.max(analysisFrames - 1, 1));
+    const end = Math.min(totalSamples, base + sampleWindow);
     let mono = 0;
-    for (let ch = 0; ch < numberOfChannels; ch += 1) {
-      const sample = channelsData[ch]?.[i] ?? 0;
-      const absSample = Math.abs(sample);
-      if (absSample > peak) peak = absSample;
-      if (absSample >= 0.999) clippingCount += 1;
-      energy += sample * sample;
-      sampleCount += 1;
-      mono += sample / numberOfChannels;
+    for (let i = base; i < end; i += frameStep) {
+      for (let ch = 0; ch < numberOfChannels; ch += 1) {
+        const sample = channelsData[ch]?.[i] ?? 0;
+        const absSample = Math.abs(sample);
+        if (absSample > peak) peak = absSample;
+        if (absSample >= 0.999) clippingCount += 1;
+        energy += sample * sample;
+        sampleCount += 1;
+        mono += sample / numberOfChannels;
+      }
     }
     void mono;
   }
 
   const monoForSpectrum = channelsData[0];
-  for (let pos = 0; pos + spectrumWindow < totalSamples && spectrumFrames < QUICK_MAX_SPECTRUM_FRAMES; pos += spectrumHop) {
+  const spectrumSpan = Math.max(totalSamples - spectrumWindow - 1, 0);
+  for (let f = 0; f < maxSpectrumFrames; f += 1) {
+    if (spectrumFrames >= maxSpectrumFrames) break;
+    const pos = maxSpectrumFrames === 1 ? 0 : Math.floor((f * spectrumSpan) / Math.max(maxSpectrumFrames - 1, 1));
+    if (pos + spectrumWindow >= totalSamples) break;
     const mags = runDftWindowed(monoForSpectrum, spectrumWindow, pos);
     const b = computeBandPowers(mags, sampleRate, spectrumWindow);
     sumSub += b.sub; sumBass += b.bass; sumLowMids += b.lowMids; sumMids += b.mids; sumPresence += b.presence; sumAir += b.air;
@@ -252,7 +263,7 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
     readiness: clippingCount > 0 ? 'Problem Area' : 'Needs Work'
   };
 
-  return { result, debug: { mode: 'quick-sampled', totalSamples, frameStep, sampledFrames: Math.ceil(totalSamples / frameStep), spectrumFrames, spectrumHop, maxSpectrumFrames: QUICK_MAX_SPECTRUM_FRAMES, maxAnalysisSamples: QUICK_MAX_ANALYSIS_SAMPLES } };
+  return { result, debug: { mode: 'quick-sampled', totalSamples, frameStep, sampledFrames: Math.ceil((analysisFrames * sampleWindow) / frameStep), spectrumFrames, spectrumHop, sampleWindow, analysisFrames, maxSpectrumFrames, maxAnalysisSamples: QUICK_MAX_ANALYSIS_SAMPLES } };
 }
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
 
