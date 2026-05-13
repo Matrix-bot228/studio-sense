@@ -41,6 +41,8 @@ const SAFE_PEAK_DBFS = -1;
 const LARGE_FILE_SAMPLES = 44_100 * 60 * 6;
 const QUICK_ANALYSIS_TARGET_WINDOWS = 48;
 const QUICK_ANALYSIS_WINDOW_SEC = 2.5;
+const QUICK_MAX_ANALYSIS_SAMPLES = 60_000;
+const QUICK_MAX_SPECTRUM_FRAMES = 120;
 
 function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
 
@@ -188,9 +190,9 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
     return { result: { durationSec, sampleRate, channels: numberOfChannels }, debug: { mode: 'quick-empty' } };
   }
 
-  const frameStep = Math.max(64, Math.floor(totalSamples / 120_000));
+  const frameStep = Math.max(128, Math.floor(totalSamples / QUICK_MAX_ANALYSIS_SAMPLES));
   const spectrumWindow = 1024;
-  const spectrumStep = Math.max(sampleRate, Math.floor(totalSamples / 48));
+  const spectrumHop = Math.max(sampleRate * 2, Math.floor(totalSamples / QUICK_MAX_SPECTRUM_FRAMES));
   let peak = 0;
   let clippingCount = 0;
   let energy = 0;
@@ -214,7 +216,7 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
   }
 
   const monoForSpectrum = channelsData[0];
-  for (let pos = 0; pos + spectrumWindow < totalSamples; pos += spectrumStep) {
+  for (let pos = 0; pos + spectrumWindow < totalSamples && spectrumFrames < QUICK_MAX_SPECTRUM_FRAMES; pos += spectrumHop) {
     const mags = runDftWindowed(monoForSpectrum, spectrumWindow, pos);
     const b = computeBandPowers(mags, sampleRate, spectrumWindow);
     sumSub += b.sub; sumBass += b.bass; sumLowMids += b.lowMids; sumMids += b.mids; sumPresence += b.presence; sumAir += b.air;
@@ -245,12 +247,12 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
     loudnessVerdict: lufsEstimate > TARGET_LUFS + 1 ? `Integrated loudness is ${(lufsEstimate - TARGET_LUFS).toFixed(1)} dB above target.` : lufsEstimate < TARGET_LUFS - 1.2 ? `Integrated loudness is ${(TARGET_LUFS - lufsEstimate).toFixed(1)} dB below target.` : 'Integrated loudness is close to target.',
     peakSafetyVerdict: peakDb < SAFE_PEAK_DBFS ? 'Peak headroom is within a safe mastering zone.' : `Peak exceeds safe ceiling by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB.`,
     clippingVerdict: clippingCount > 0 ? `Possible clipping in sampled frames (${clippingCount} clipped samples).` : 'No clipping detected in sampled frames.',
-    balanceVerdict: 'Spectrum profile estimated from sampled quick scan.',
-    masteringSuggestion: 'Use this quick estimate to identify broad issues, then confirm with focused manual section checks.',
+    balanceVerdict: 'Quick estimate: spectrum profile sampled for beginner-friendly speed.',
+    masteringSuggestion: 'Quick estimate for first-pass decisions; confirm broad issues with focused manual section checks.',
     readiness: clippingCount > 0 ? 'Problem Area' : 'Needs Work'
   };
 
-  return { result, debug: { mode: 'quick-sampled', totalSamples, frameStep, sampledFrames: Math.ceil(totalSamples / frameStep), spectrumFrames, spectrumStep } };
+  return { result, debug: { mode: 'quick-sampled', totalSamples, frameStep, sampledFrames: Math.ceil(totalSamples / frameStep), spectrumFrames, spectrumHop, maxSpectrumFrames: QUICK_MAX_SPECTRUM_FRAMES, maxAnalysisSamples: QUICK_MAX_ANALYSIS_SAMPLES } };
 }
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
 
