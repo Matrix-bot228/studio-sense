@@ -426,3 +426,5 @@ button.upload-btn:disabled,
   font-weight: 800;
   padding: 12px 16px;
 }
+
+.tiny-note { font-size: 0.78rem; opacity: 0.8; margin-top: 0.25rem; }

@@ -683,10 +683,11 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   for (const rec of adaptive.recommendations) { if (!seen.has(rec)) { prioritizedFirst.push(rec); seen.add(rec); } }
   for (const step of first) { if (!seen.has(step)) { prioritizedFirst.push(step); seen.add(step); } }
   const description = userIntent.description.toLowerCase();
-  const prioritizeBass = /(bass|low[- ]?end|sub|kick|rumble|boom|boomy|muddy)/i.test(description);
-  const bassHint = /(bass|low[- ]?end|sub|kick|rumble|boom|boomy|muddy|120|150|200|350)/i;
-  if (prioritizeBass) {
-    prioritizedFirst.sort((a, b) => Number(bassHint.test(b)) - Number(bassHint.test(a)));
+  const issuePriority = /(bass|low[- ]?end|boomy|muddy|boxed|vocal buried|harsh|bright|quiet|distorted|clipping|mono)/i;
+  const prioritizeIssue = issuePriority.test(description);
+  const issueHint = /(bass|low[- ]?end|boomy|muddy|boxed|vocal|clarity|harsh|bright|quiet|gain|distort|clip|mono|stereo|120|150|200|350|2k|5k|8k|12k)/i;
+  if (prioritizeIssue) {
+    prioritizedFirst.sort((a, b) => Number(issueHint.test(b)) - Number(issueHint.test(a)));
   }
 
   if (!wrong.length) {
@@ -1055,7 +1056,7 @@ export default function App() {
     setLoading(true);
     setIsAnalyzing(true);
     setAnalysisStatus('processing');
-    setAnalysisStage('Reading waveform');
+    setAnalysisStage('Reading audio');
     setStatus('Analyzing…');
     setResult(null);
     setAutoMarkers([]);
@@ -1331,6 +1332,7 @@ export default function App() {
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
       <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
+      <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
       {audioUrl ? <AudioPlayer
         audioUrl={audioUrl}
         startSec={startSec}
@@ -1358,6 +1360,7 @@ export default function App() {
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
   <p className="status">{status}</p>
+  <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
   <p className="status" style={{ fontSize: "0.8rem", opacity: 0.75 }}>Debug: analysisStatus={analysisStatus} | analysisStage={analysisStage} | status={status}</p>
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
