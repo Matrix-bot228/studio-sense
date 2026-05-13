@@ -208,7 +208,7 @@ type WorkerRequest =
   | { type: 'analyzeSection'; payload: WorkerAudioData & { startSec: number; endSec: number } };
 
 type WorkerStageMessage = { type: 'stage'; stage: string; requestId: number };
-type WorkerDoneMessage = { type: 'done'; result: AnalysisResult; markers: ProblemMarker[]; debug?: AnalysisDebug | null; isLargeFile?: boolean; requestId: number };
+type WorkerDoneMessage = { type: 'done'; result?: AnalysisResult; markers?: ProblemMarker[]; debug?: AnalysisDebug | null; isLargeFile?: boolean; data?: { result: AnalysisResult; markers: ProblemMarker[]; debug?: AnalysisDebug | null }; requestId: number };
 type WorkerSectionDoneMessage = { type: 'sectionDone'; sectionResult: AnalysisResult; debug?: AnalysisDebug | null; requestId: number };
 type WorkerErrorMessage = { type: 'error'; error?: string; requestId: number };
 type WorkerResponseMessage = WorkerStageMessage | WorkerDoneMessage | WorkerSectionDoneMessage | WorkerErrorMessage;
@@ -981,6 +981,18 @@ export default function App() {
       }
 
       if (event.data?.type === 'done' || event.data?.type === 'sectionDone') {
+        if (event.data?.type === 'done' && event.data?.data?.result) {
+          cleanup();
+          resolve({
+            type: 'done',
+            result: event.data.data.result,
+            markers: event.data.data.markers ?? [],
+            debug: event.data.data.debug ?? null,
+            isLargeFile: event.data.isLargeFile ?? false,
+            requestId
+          } as WorkerDoneMessage);
+          return;
+        }
         cleanup();
         resolve(event.data as WorkerResponseMessage);
         return;
@@ -1074,7 +1086,7 @@ export default function App() {
       if (!finalResult) throw new Error('No final analysis result returned');
       console.log('Final analysis result', finalResult);
       setResult(finalResult);
-      setAutoMarkers(msg.markers);
+      setAutoMarkers(msg.markers ?? []);
       setAnalysisDebug(msg.debug ?? null);
       setLastAnalysisError(null);
       if (msg.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');

@@ -183,65 +183,91 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
 
 function analyzeQuick(channelsData: Float32Array[], sampleRate: number, durationSec: number): { result: AnalysisResult; debug: Record<string, unknown> } {
   const totalSamples = channelsData[0]?.length ?? 0;
-  const windowSec = Math.min(QUICK_ANALYSIS_WINDOW_SEC, Math.max(durationSec / 4, 0.8));
-  const windowCount = Math.min(QUICK_ANALYSIS_TARGET_WINDOWS, Math.max(8, Math.floor(durationSec / Math.max(windowSec, 0.8))));
-  const strideSec = durationSec / windowCount;
-
-  const partials: AnalysisResult[] = [];
-  const debugWindows: Array<{ startSec: number; endSec: number }> = [];
-
-  for (let i = 0; i < windowCount; i += 1) {
-    const center = (i + 0.5) * strideSec;
-    const startSec = clamp(center - windowSec / 2, 0, Math.max(durationSec - 0.1, 0));
-    const endSec = clamp(startSec + windowSec, startSec + 0.1, durationSec);
-    const { result } = analyzeRange(channelsData, sampleRate, startSec, endSec);
-    partials.push(result);
-    debugWindows.push({ startSec, endSec });
+  const numberOfChannels = channelsData.length;
+  if (!totalSamples || !numberOfChannels) {
+    return { result: { durationSec, sampleRate, channels: numberOfChannels }, debug: { mode: 'quick-empty' } };
   }
 
-  const avg = (vals: number[]) => vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
-  const peakDb = Math.max(...partials.map((p) => p.peakDb ?? -Infinity));
-  const clippingCount = partials.reduce((sum, p) => sum + (p.clippingCount ?? 0), 0);
+  const frameStep = Math.max(64, Math.floor(totalSamples / 120_000));
+  const spectrumWindow = 1024;
+  const spectrumStep = Math.max(sampleRate, Math.floor(totalSamples / 48));
+  let peak = 0;
+  let clippingCount = 0;
+  let energy = 0;
+  let sampleCount = 0;
 
-  const merged: AnalysisResult = {
-    ...partials[Math.floor(partials.length / 2)],
+  let sumSub = 0; let sumBass = 0; let sumLowMids = 0; let sumMids = 0; let sumPresence = 0; let sumAir = 0;
+  let spectrumFrames = 0;
+
+  for (let i = 0; i < totalSamples; i += frameStep) {
+    let mono = 0;
+    for (let ch = 0; ch < numberOfChannels; ch += 1) {
+      const sample = channelsData[ch]?.[i] ?? 0;
+      const absSample = Math.abs(sample);
+      if (absSample > peak) peak = absSample;
+      if (absSample >= 0.999) clippingCount += 1;
+      energy += sample * sample;
+      sampleCount += 1;
+      mono += sample / numberOfChannels;
+    }
+    void mono;
+  }
+
+  const monoForSpectrum = channelsData[0];
+  for (let pos = 0; pos + spectrumWindow < totalSamples; pos += spectrumStep) {
+    const mags = runDftWindowed(monoForSpectrum, spectrumWindow, pos);
+    const b = computeBandPowers(mags, sampleRate, spectrumWindow);
+    sumSub += b.sub; sumBass += b.bass; sumLowMids += b.lowMids; sumMids += b.mids; sumPresence += b.presence; sumAir += b.air;
+    spectrumFrames += 1;
+  }
+
+  const rms = Math.sqrt(energy / Math.max(sampleCount, 1));
+  const peakDb = peak > 0 ? 20 * Math.log10(peak) : -Infinity;
+  const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+  const lufsEstimate = rmsDb - 0.7;
+  const totalBand = Math.max(sumSub + sumBass + sumLowMids + sumMids + sumPresence + sumAir, Number.EPSILON);
+  const lowPercent = ((sumSub + sumBass + sumLowMids) / totalBand) * 100;
+  const midPercent = ((sumMids + sumPresence) / totalBand) * 100;
+  const highPercent = (sumAir / totalBand) * 100;
+
+  const result: AnalysisResult = {
     durationSec,
     sampleRate,
-    channels: channelsData.length,
+    channels: numberOfChannels,
     peakDb,
-    rmsDb: avg(partials.map((p) => p.rmsDb ?? -120)),
+    rmsDb,
     clippingCount,
-    lowPercent: avg(partials.map((p) => p.lowPercent ?? 0)),
-    midPercent: avg(partials.map((p) => p.midPercent ?? 0)),
-    highPercent: avg(partials.map((p) => p.highPercent ?? 0)),
-    lufsEstimate: avg(partials.map((p) => p.lufsEstimate ?? -120)),
+    lowPercent,
+    midPercent,
+    highPercent,
+    lufsEstimate,
     confidence: durationSec >= 120 ? 'Medium' : 'Low',
-    clippingVerdict: clippingCount > 0 ? `Possible clipping in sampled windows (${clippingCount} clipped samples).` : 'No clipping detected in sampled windows.',
-    balanceVerdict: `${partials[0]?.balanceVerdict ?? 'Spectrum profile estimated from quick scan.'} (quick estimate)`,
+    loudnessVerdict: lufsEstimate > TARGET_LUFS + 1 ? `Integrated loudness is ${(lufsEstimate - TARGET_LUFS).toFixed(1)} dB above target.` : lufsEstimate < TARGET_LUFS - 1.2 ? `Integrated loudness is ${(TARGET_LUFS - lufsEstimate).toFixed(1)} dB below target.` : 'Integrated loudness is close to target.',
+    peakSafetyVerdict: peakDb < SAFE_PEAK_DBFS ? 'Peak headroom is within a safe mastering zone.' : `Peak exceeds safe ceiling by ${(peakDb - SAFE_PEAK_DBFS).toFixed(1)} dB.`,
+    clippingVerdict: clippingCount > 0 ? `Possible clipping in sampled frames (${clippingCount} clipped samples).` : 'No clipping detected in sampled frames.',
+    balanceVerdict: 'Spectrum profile estimated from sampled quick scan.',
+    masteringSuggestion: 'Use this quick estimate to identify broad issues, then confirm with focused manual section checks.',
+    readiness: clippingCount > 0 ? 'Problem Area' : 'Needs Work'
   };
 
-  return {
-    result: merged,
-    debug: { mode: 'quick', totalSamples, windowCount, windowSec, debugWindows }
-  };
+  return { result, debug: { mode: 'quick-sampled', totalSamples, frameStep, sampledFrames: Math.ceil(totalSamples / frameStep), spectrumFrames, spectrumStep } };
 }
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
 
 self.onmessage = (event: MessageEvent) => {
   const { type, payload, requestId } = event.data;
+  console.log('worker received', type, requestId);
   try {
     if (type === 'analyze') {
       const { channels, sampleRate, durationSec } = payload;
       self.postMessage({ type: 'stage', stage: 'Reading audio', requestId });
       self.postMessage({ type: 'stage', stage: 'Quick scan', requestId });
       const { result, debug } = analyzeQuick(channels, sampleRate, durationSec);
-      self.postMessage({ type: 'stage', stage: 'Checking loudness', requestId });
-      self.postMessage({ type: 'stage', stage: 'Checking bass / mids / highs', requestId });
-      self.postMessage({ type: 'stage', stage: 'Building fix plan', requestId });
+      self.postMessage({ type: 'stage', stage: 'Building result', requestId });
       console.log('[StudioSense][debug]', debug);
       const markers = buildProblemMarkers(result);
-      self.postMessage({ type: 'stage', stage: 'Analysis complete', requestId });
-      self.postMessage({ type: 'done', result, markers, debug, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES, requestId });
+      console.log('worker posting done', requestId);
+      self.postMessage({ requestId, type: 'done', data: { result, markers, debug } });
       return;
     }
     if (type === 'analyzeSection') {
@@ -251,8 +277,8 @@ self.onmessage = (event: MessageEvent) => {
       self.postMessage({ type: 'sectionDone', sectionResult, debug, requestId });
       return;
     }
-    self.postMessage({ type: 'error', error: `Unknown worker request type: ${String(type)}`, requestId });
+    self.postMessage({ type: 'failed', error: `Unknown worker request type: ${String(type)}`, requestId });
   } catch (error) {
-    self.postMessage({ type: 'error', error: error instanceof Error ? error.message : 'Unknown analysis failure', requestId });
+    self.postMessage({ type: 'failed', error: error instanceof Error ? error.message : String(error), requestId });
   }
 };
