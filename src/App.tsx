@@ -925,6 +925,7 @@ export default function App() {
   const [analysisStarted, setAnalysisStarted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState('Idle');
+  const [lastAnalysisError, setLastAnalysisError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [largeFileWarning, setLargeFileWarning] = useState('');
   const [fileName, setFileName] = useState('No file selected');
@@ -1023,6 +1024,7 @@ export default function App() {
     setLoading(true); setIsAnalyzing(false); setFileName(file.name); setStatus('Loading audio…'); setAnalysisStatus('idle'); setAnalysisStarted(false); setAnalysisStage('Idle'); setLargeFileWarning('');
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     setAnalysisDebug(null);
+    setLastAnalysisError(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
     setAudioBuffer(null); audioDataRef.current = null;
@@ -1073,6 +1075,7 @@ export default function App() {
       setResult(finalResult);
       setAutoMarkers(msg.markers);
       setAnalysisDebug(msg.debug ?? null);
+      setLastAnalysisError(null);
       if (msg.isLargeFile) setLargeFileWarning('Large file detected — analysis may take longer.');
       setAnalysisStatus('complete');
       setAnalysisStage('idle');
@@ -1081,12 +1084,14 @@ export default function App() {
       setStatus('Analysis complete');
       setAnalysisStarted(true);
     } catch (error) {
-      console.log('Analysis failed', error);
+      console.error('Analysis failed in handleStartAnalysis:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      setLastAnalysisError(message);
       setAnalysisStatus('failed');
       setAnalysisStage('idle');
       setIsAnalyzing(false);
       setLoading(false);
-      setStatus('Analysis failed. Please try another audio file.');
+      setStatus(`Analysis failed: ${message}`);
     } finally {
       setLoading(false);
       setIsAnalyzing(false);
@@ -1327,6 +1332,7 @@ export default function App() {
         </button>
       </div>
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
+      <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
       {audioUrl ? <AudioPlayer
         audioUrl={audioUrl}
@@ -1355,6 +1361,7 @@ export default function App() {
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
   <p className="status">{analysisStatus === "processing" ? `Studio Sense is analyzing your recording... (${analysisStage})` : analysisStatus === "complete" ? "Analysis complete" : analysisStatus === "failed" ? "Analysis failed (playback may still work)." : "Audio loaded. Review your goal, then click Analyze with Studio Sense."}</p>
+  <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? "none"}</p>
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
     startSec={startSec}
