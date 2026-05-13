@@ -269,23 +269,29 @@ function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return 
 
 self.onmessage = (event: MessageEvent) => {
   const { type, payload, requestId } = event.data;
-  console.log('worker received', type, requestId);
+  console.log('[StudioSense] worker received analyze message', type, requestId);
   try {
     if (type === 'analyze') {
       const { channels, sampleRate, durationSec } = payload;
       self.postMessage({ type: 'stage', stage: 'Reading audio', requestId });
       self.postMessage({ type: 'stage', stage: 'Quick scan', requestId });
+      console.time('StudioSense worker analysis');
       const { result, debug } = analyzeQuick(channels, sampleRate, durationSec);
+      console.timeEnd('StudioSense worker analysis');
       self.postMessage({ type: 'stage', stage: 'Building result', requestId });
       console.log('[StudioSense][debug]', debug);
       const markers = buildProblemMarkers(result);
-      console.log('worker posting done', requestId);
+      console.log('StudioSense worker done', requestId);
+      console.time('StudioSense worker done');
       self.postMessage({ requestId, type: 'done', data: { result, markers, debug } });
+      console.timeEnd('StudioSense worker done');
       return;
     }
     if (type === 'analyzeSection') {
       const { channels, sampleRate, startSec, endSec } = payload;
+      console.time('StudioSense worker analysis');
       const { result: sectionResult, debug } = analyzeRange(channels, sampleRate, startSec, endSec);
+      console.timeEnd('StudioSense worker analysis');
       console.log('[StudioSense][section-debug]', debug);
       self.postMessage({ type: 'sectionDone', sectionResult, debug, requestId });
       return;

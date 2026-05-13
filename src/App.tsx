@@ -1056,7 +1056,9 @@ export default function App() {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const audioContext = new AudioContext();
+      console.time('StudioSense decode audio');
       const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      console.timeEnd('StudioSense decode audio');
       await audioContext.close();
       setAudioBuffer(decoded);
       const channels = Array.from({ length: decoded.numberOfChannels }, (_, i) => new Float32Array(decoded.getChannelData(i)));
@@ -1073,7 +1075,8 @@ export default function App() {
 
   const handleStartAnalysis = useCallback(async () => {
     if (!audioDataRef.current) return;
-    console.log('Starting manual analysis');
+    console.log('[StudioSense] Analyze button clicked');
+    console.time('StudioSense total analyze');
     setAnalysisStarted(true);
     setLoading(true);
     setIsAnalyzing(true);
@@ -1106,12 +1109,14 @@ export default function App() {
       setLoading(false);
       setStatus('Analysis complete');
       setAnalysisStarted(true);
+      console.timeEnd('StudioSense total analyze');
     } catch (error) {
       console.error('Analysis failed in handleStartAnalysis:', error);
       const message = error instanceof Error ? error.message : String(error);
       setAnalysisStatus('failed');
       setAnalysisStage('idle');
       setStatus(`Analysis failed: ${message}`);
+      console.timeEnd('StudioSense total analyze');
     } finally {
       setLoading(false);
       setIsAnalyzing(false);
