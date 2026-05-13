@@ -1086,11 +1086,8 @@ export default function App() {
     } catch (error) {
       console.error('Analysis failed in handleStartAnalysis:', error);
       const message = error instanceof Error ? error.message : String(error);
-      setLastAnalysisError(message);
       setAnalysisStatus('failed');
       setAnalysisStage('idle');
-      setIsAnalyzing(false);
-      setLoading(false);
       setStatus(`Analysis failed: ${message}`);
     } finally {
       setLoading(false);
@@ -1360,8 +1357,8 @@ export default function App() {
     </div>
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
-  <p className="status">{analysisStatus === "processing" ? `Studio Sense is analyzing your recording... (${analysisStage})` : analysisStatus === "complete" ? "Analysis complete" : analysisStatus === "failed" ? "Analysis failed (playback may still work)." : "Audio loaded. Review your goal, then click Analyze with Studio Sense."}</p>
-  <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? "none"}</p>
+  <p className="status">{status}</p>
+  <p className="status" style={{ fontSize: "0.8rem", opacity: 0.75 }}>Debug: analysisStatus={analysisStatus} | analysisStage={analysisStage} | status={status}</p>
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
     startSec={startSec}
