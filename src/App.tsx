@@ -897,6 +897,16 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
     why.push('Loudness, peak headroom, stereo format, and tonal balance are internally consistent.');
     next.push('Do a final reference check, then export your release master.');
   }
+  if (sourceQuality?.sourceTypeGuess === 'Compressed source with issues') {
+    hearing.push('This sounds like a low-fidelity or older compressed recording.');
+    why.push('Weak signal, narrow stereo, rumble, and missing air are common with this kind of source.');
+    next.push('Clean the source first before attempting full mastering.');
+    next.push('Remove low-end rumble (especially around 20–60 Hz) before adding loudness.');
+    next.push('Reduce muddy or harsh bands, then raise gain carefully in small steps.');
+    next.push('Avoid heavy limiting so you keep the original character intact.');
+    next.push('Aim for clear improvement rather than a modern studio makeover.');
+  }
+
   if (userIntent.genre === 'Blues' || userIntent.genre === 'Jazz') next.push('Preserve warmth and dynamics; avoid over-brightening.');
   if (userIntent.genre === 'Lo-fi') next.push('Focus on whether the lo-fi texture feels pleasant, not perfectly clean.');
   if (userIntent.genre === 'Hard Rock') next.push('Focus on vocal clarity, harsh cymbals, and guitar masking.');
