@@ -39,6 +39,8 @@ type ProblemMarker = {
 const TARGET_LUFS = -14;
 const SAFE_PEAK_DBFS = -1;
 const LARGE_FILE_SAMPLES = 44_100 * 60 * 6;
+const QUICK_ANALYSIS_TARGET_WINDOWS = 48;
+const QUICK_ANALYSIS_WINDOW_SEC = 2.5;
 
 function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
 
@@ -177,6 +179,52 @@ function analyzeRange(channelsData: Float32Array[], sampleRate: number, startSec
   return { result, debug: { bandEnergy: { sub: sumSub, bass: sumBass, lowMids: sumLowMids, mids: sumMids, presence: sumPresence, air: sumAir }, bandPercents, detections: { bassMasking, muddyMids, harshUpperMids, dullHighs, thinMix, lowHighImbalance }, loudness: { lufsEstimate, frameSpreadDb: dynSpread }, profileDecision: profile, frameCount } };
 }
 
+
+
+function analyzeQuick(channelsData: Float32Array[], sampleRate: number, durationSec: number): { result: AnalysisResult; debug: Record<string, unknown> } {
+  const totalSamples = channelsData[0]?.length ?? 0;
+  const windowSec = Math.min(QUICK_ANALYSIS_WINDOW_SEC, Math.max(durationSec / 4, 0.8));
+  const windowCount = Math.min(QUICK_ANALYSIS_TARGET_WINDOWS, Math.max(8, Math.floor(durationSec / Math.max(windowSec, 0.8))));
+  const strideSec = durationSec / windowCount;
+
+  const partials: AnalysisResult[] = [];
+  const debugWindows: Array<{ startSec: number; endSec: number }> = [];
+
+  for (let i = 0; i < windowCount; i += 1) {
+    const center = (i + 0.5) * strideSec;
+    const startSec = clamp(center - windowSec / 2, 0, Math.max(durationSec - 0.1, 0));
+    const endSec = clamp(startSec + windowSec, startSec + 0.1, durationSec);
+    const { result } = analyzeRange(channelsData, sampleRate, startSec, endSec);
+    partials.push(result);
+    debugWindows.push({ startSec, endSec });
+  }
+
+  const avg = (vals: number[]) => vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+  const peakDb = Math.max(...partials.map((p) => p.peakDb ?? -Infinity));
+  const clippingCount = partials.reduce((sum, p) => sum + (p.clippingCount ?? 0), 0);
+
+  const merged: AnalysisResult = {
+    ...partials[Math.floor(partials.length / 2)],
+    durationSec,
+    sampleRate,
+    channels: channelsData.length,
+    peakDb,
+    rmsDb: avg(partials.map((p) => p.rmsDb ?? -120)),
+    clippingCount,
+    lowPercent: avg(partials.map((p) => p.lowPercent ?? 0)),
+    midPercent: avg(partials.map((p) => p.midPercent ?? 0)),
+    highPercent: avg(partials.map((p) => p.highPercent ?? 0)),
+    lufsEstimate: avg(partials.map((p) => p.lufsEstimate ?? -120)),
+    confidence: durationSec >= 120 ? 'Medium' : 'Low',
+    clippingVerdict: clippingCount > 0 ? `Possible clipping in sampled windows (${clippingCount} clipped samples).` : 'No clipping detected in sampled windows.',
+    balanceVerdict: `${partials[0]?.balanceVerdict ?? 'Spectrum profile estimated from quick scan.'} (quick estimate)`,
+  };
+
+  return {
+    result: merged,
+    debug: { mode: 'quick', totalSamples, windowCount, windowSec, debugWindows }
+  };
+}
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
 
 self.onmessage = (event: MessageEvent) => {
@@ -184,10 +232,15 @@ self.onmessage = (event: MessageEvent) => {
   try {
     if (type === 'analyze') {
       const { channels, sampleRate, durationSec } = payload;
-      self.postMessage({ type: 'stage', stage: 'Reading full track waveform', requestId });
-      const { result, debug } = analyzeRange(channels, sampleRate, 0, durationSec);
+      self.postMessage({ type: 'stage', stage: 'Reading audio', requestId });
+      self.postMessage({ type: 'stage', stage: 'Quick scan', requestId });
+      const { result, debug } = analyzeQuick(channels, sampleRate, durationSec);
+      self.postMessage({ type: 'stage', stage: 'Checking loudness', requestId });
+      self.postMessage({ type: 'stage', stage: 'Checking bass / mids / highs', requestId });
+      self.postMessage({ type: 'stage', stage: 'Building fix plan', requestId });
       console.log('[StudioSense][debug]', debug);
       const markers = buildProblemMarkers(result);
+      self.postMessage({ type: 'stage', stage: 'Analysis complete', requestId });
       self.postMessage({ type: 'done', result, markers, debug, isLargeFile: (channels[0]?.length ?? 0) > LARGE_FILE_SAMPLES, requestId });
       return;
     }
