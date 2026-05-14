@@ -1370,7 +1370,8 @@ export default function App() {
   const isBeginnerMode = appMode === 'beginner';
   const isCreatorMode = appMode === 'creator';
   const isPreAnalysis = !analysisStarted;
-  const showNewTrackButton = Boolean(audioUrl) || analysisStarted || analysisStatus === 'complete';
+  const hasTrackContext = Boolean(audioUrl) || (fileName.trim().length > 0 && fileName !== 'No file selected');
+  const showNewTrackButton = hasTrackContext;
 
   return (
     <main className="app-shell">
@@ -1410,7 +1411,7 @@ export default function App() {
         </button>
         {showNewTrackButton ? (
           <button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>
-            Analyze Another Track
+            New Track
           </button>
         ) : null}
       </div>
@@ -1443,8 +1444,11 @@ export default function App() {
       <button type="button" role="tab" aria-selected={isCreatorMode} className={`mode-toggle-btn ${isCreatorMode ? "active" : ""}`} onClick={() => setAppMode("creator")}>Creator Mode</button>
     </div>
   </section>
-  <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
-  {showNewTrackButton ? <section className="workflow-row"><button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>Analyze Another Track</button></section> : null}
+  <section className="workflow-row">
+    <span className="filename">File: {fileName}</span>
+    <span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span>
+    {showNewTrackButton ? <button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
+  </section>
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
   <p className="status" style={{ fontSize: "0.8rem", opacity: 0.75 }}>Debug: analysisStatus={analysisStatus} | analysisStage={analysisStage} | status={status}</p>
