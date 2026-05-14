@@ -1205,39 +1205,63 @@ export default function App() {
     const feedback: string[] = [];
     const lufs = result.lufsEstimate ?? result.lufs;
     const peak = result.peakDb;
+    const rms = result.rmsDb;
+    const clippingCount = result.clippingCount ?? 0;
     const low = result.lowPercent;
     const mid = result.midPercent;
     const high = result.highPercent;
+    const frequencyIssue = detectFrequencyIssue(result);
+    const isMono = (result.channels ?? 2) === 1;
+    const isSafePeak = typeof peak === 'number' && peak < SAFE_PEAK_DBFS;
+    const poorSource = sourceQuality ? ['Low Fidelity Source', 'Standard Compressed Audio'].includes(sourceQuality.rating) : false;
 
-    if (typeof peak === 'number') {
-      feedback.push(peak > -1
-        ? `Your loudest hit is at ${peak.toFixed(1)} dBFS, so let’s pull that down first to keep playback clean.`
-        : `Great start: your peak is ${peak.toFixed(1)} dBFS, which is in a safe zone.`);
+    if (clippingCount > 0) {
+      feedback.push(`Priority 1: clipping was detected (${clippingCount} samples). Back off limiter/output first until crackle is gone.`);
+    } else if (typeof peak === 'number') {
+      feedback.push(isSafePeak
+        ? `Peak is safe at ${peak.toFixed(1)} dBFS, so you do not need clipping repair first.`
+        : `Peak is high at ${peak.toFixed(1)} dBFS, so reduce output slightly before pushing level.`);
     }
+
     if (typeof lufs === 'number') {
-      feedback.push(lufs < -16
-        ? `Your song is currently around ${lufs.toFixed(1)} LUFS, so a small lift will help it sit better next to other releases.`
-        : lufs > -10
-          ? `You are around ${lufs.toFixed(1)} LUFS already, so avoid pushing harder and protect your punch.`
-          : `Nice loudness zone at about ${lufs.toFixed(1)} LUFS. Focus on feel, not more level.`);
+      if (lufs < -16 && poorSource) feedback.push(`Loudness is low (${lufs.toFixed(1)} LUFS). Clean the source before pushing loudness.`);
+      else if (lufs < -16) feedback.push(`Loudness is low at ${lufs.toFixed(1)} LUFS. Raise level in small steps after peak safety is confirmed.`);
+      else if (lufs > -10) feedback.push(`Loudness is already hot at ${lufs.toFixed(1)} LUFS, so avoid extra limiting to keep punch.`);
+      else feedback.push(`Loudness is in a usable zone (${lufs.toFixed(1)} LUFS). Focus on translation and tone.`);
     }
+
+    if (typeof rms === 'number') {
+      feedback.push(rms < -22 ? `Signal strength is light (${rms.toFixed(1)} dB RMS), so detail may feel distant.` : `Signal strength is solid (${rms.toFixed(1)} dB RMS).`);
+    }
+
     if (typeof low === 'number' && typeof mid === 'number' && typeof high === 'number') {
-      if (low < 22) feedback.push(`Tone check: low end is light (${low.toFixed(0)}%), so add a touch of warmth only after level is stable.`);
-      else if (low > 44) feedback.push(`Tone check: lows are heavy (${low.toFixed(0)}%), so trim mud for clearer vocals and tighter kick.`);
-      else feedback.push(`Tone check: low/mid/high balance (${low.toFixed(0)}/${mid.toFixed(0)}/${high.toFixed(0)}%) looks healthy overall.`);
+      if (low > 44) feedback.push(`Low-end buildup: lows are ${low.toFixed(0)}% (${mid.toFixed(0)}% mids / ${high.toFixed(0)}% highs), which can mask kick/vocals and feel boomy.`);
+      else if (high < 14) feedback.push(`Top-end is restrained (${high.toFixed(0)}% highs), so the mix may feel dull or missing sparkle.`);
+      else feedback.push(`Balance check: ${low.toFixed(0)}/${mid.toFixed(0)}/${high.toFixed(0)}% low/mid/high with no dominant tonal red flag.`);
+    }
+
+    if (frequencyIssue) feedback.push(`Main frequency issue: ${frequencyIssue.range} (${frequencyIssue.mainIssue}).`);
+
+    if (poorSource || isMono) {
+      const limits = [poorSource ? `source quality is rated "${sourceQuality?.rating}"` : null, isMono ? 'file is mono' : null].filter(Boolean).join(' and ');
+      feedback.push(`Source limitation note: ${limits}, so mastering can improve translation but cannot fully restore missing detail or width.`);
     }
 
     return {
       modeName: 'Listening Coaching Mode',
-      intro: 'Friendly, step-by-step mastering help based on what your track is doing right now.',
+      intro: 'Friendly, step-by-step mastering help driven by your measured values.',
       dynamicFeedback: feedback,
-      fixOrder: [
-        'Step 1: Fix peaks — make sure the loudest moments stay clean and controlled.',
-        'Step 2: Adjust loudness — bring volume up (or down) in small moves while keeping transients natural.',
-        'Step 3: Adjust tone — shape bass/mids/highs last, once level decisions are done.'
+      fixOrder: clippingCount > 0 ? [
+        'Step 1: Remove clipping first (highest priority).',
+        'Step 2: Set loudness carefully once distortion is gone.',
+        'Step 3: Shape tone and stereo image after level decisions.'
+      ] : [
+        'Step 1: Verify peak safety and clean source quality.',
+        'Step 2: Adjust loudness in small moves while monitoring RMS and punch.',
+        'Step 3: Refine low/high balance and stereo image last.'
       ]
     };
-  }, [result, listeningCoachingModeEnabled]);
+  }, [result, listeningCoachingModeEnabled, sourceQuality]);
 
   const frequencyBands: FrequencyBandRow[] = useMemo(() => {
     if (!result) return [];
@@ -1460,7 +1484,7 @@ export default function App() {
   {isCreatorMode ? <section className="metrics-grid">
     <div className="metric"><span>Source Quality</span><strong><span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></strong></div><div className="metric"><span>Release Readiness</span><strong><span className={`pill ${toneForReadiness(result?.readiness)}`}>{result?.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(result?.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(result?.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(result?.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(result?.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(result?.clippingCount, 0)}</strong></div><div className="metric"><span>Duration (s)</span><strong>{formatNumber(result?.durationSec, 2)}</strong></div><div className="metric"><span>Sample rate</span><strong>{formatNumber(result?.sampleRate, 0)}</strong></div><div className="metric"><span>Channels</span><strong>{formatNumber(result?.channels, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance</span><strong>{formatNumber(result?.lowPercent, 0)} / {formatNumber(result?.midPercent, 0)} / {formatNumber(result?.highPercent, 0)}%</strong></div><div className="metric span-2"><span>Source type guess</span><strong>{sourceQuality?.sourceTypeGuess ?? 'Run analysis to classify source type.'}</strong></div><div className="metric span-2"><span>Source quality note</span><strong>{sourceQuality?.note ?? 'Run analysis to classify source quality.'}</strong></div>
   </section> : null}
-  {isCreatorMode && result ? <section className="guidance"><h2>Developer Debug (temporary)</h2><details><summary>Show analysis internals</summary><pre>{JSON.stringify(analysisDebug, null, 2)}</pre></details></section> : null}
+  {isCreatorMode && result ? <section className="guidance"><h2>Decision Debug</h2><p className="empty">Raw values used for coaching decisions.</p><ul><li>LUFS: {formatDb(result.lufsEstimate ?? result.lufs)}</li><li>Peak dBFS: {formatDb(result.peakDb)}</li><li>Clipping count: {formatNumber(result.clippingCount, 0)}</li><li>RMS dB: {formatDb(result.rmsDb)}</li><li>Stereo: {(result.channels ?? 2) === 1 ? 'Mono' : 'Stereo'}</li><li>Source quality: {sourceQuality?.rating ?? '—'}</li><li>Low/Mid/High: {formatNumber(result.lowPercent, 0)} / {formatNumber(result.midPercent, 0)} / {formatNumber(result.highPercent, 0)}%</li><li>Main frequency issue: {frequencyFeel ? `${frequencyFeel.range} (${frequencyFeel.mainIssue})` : 'None detected'}</li><li>Frame count: {analysisDebug && typeof analysisDebug.frameCount === 'number' ? analysisDebug.frameCount : '—'}</li></ul></section> : null}
 
   {isCreatorMode && analysisStarted ? <section className="guidance"><h2>Selected Section Analysis</h2><p className="empty">Browser-based FFT analysis of the selected section.</p>{sectionResult ? <><section className="metrics-grid"><div className="metric"><span>Readiness</span><strong><span className={`pill ${toneForReadiness(sectionResult.readiness)}`}>{sectionResult.readiness ?? '—'}</span></strong></div><div className="metric"><span>Score</span><strong>{formatScore(sectionResult.score)}</strong></div><div className="metric"><span>LUFS estimate</span><strong>{formatDb(sectionResult.lufsEstimate)}</strong></div><div className="metric"><span>Peak dBFS</span><strong>{formatDb(sectionResult.peakDb)}</strong></div><div className="metric"><span>RMS dB</span><strong>{formatDb(sectionResult.rmsDb)}</strong></div><div className="metric"><span>Clipping count</span><strong>{formatNumber(sectionResult.clippingCount, 0)}</strong></div><div className="metric span-2"><span>Low / Mid / High balance</span><strong>{formatNumber(sectionResult.lowPercent, 0)} / {formatNumber(sectionResult.midPercent, 0)} / {formatNumber(sectionResult.highPercent, 0)}%</strong></div></section>{sectionNarrative.map((n) => <p key={n}>{n}</p>)}<div className="verdicts section-verdicts"><ul>{[{ label: 'Loudness verdict', text: sectionResult.loudnessVerdict }, { label: 'Peak safety verdict', text: sectionResult.peakSafetyVerdict }, { label: 'Clipping warning', text: sectionResult.clippingVerdict }, { label: 'Spectrum verdict', text: sectionResult.balanceVerdict }, { label: 'Mastering suggestion', text: sectionResult.masteringSuggestion }].filter((item) => Boolean(item.text)).map((item) => <li key={item.label}><span className="pill info">{item.label}</span><span>{item.text}</span></li>)}</ul></div><div className="workflow-row"><input className="note-input" value={problemNote} placeholder="Short problem note" onChange={(e) => setProblemNote(e.target.value)} /><button className="upload-btn" type="button" onClick={() => { if (!hasSelection || !sectionResult) return; setManualProblemAreas((prev) => [{ id: `${Date.now()}`, startSec: startSec ?? 0, endSec: endSec ?? 0, note: problemNote || 'Marked problem area', metrics: sectionResult }, ...prev]); setProblemNote(''); }}>Mark as problem area</button></div></> : <p className="empty">Select a valid start/end range, then analyze selected section.</p>}</section> : null}
 
@@ -1474,7 +1498,7 @@ export default function App() {
 
   {isBeginnerMode ? <section className="guidance priority-fix"><h2>🎧 Listening Coach — What to Fix First</h2>{priorityFix ? <><h3>{priorityFix.title}</h3><p>{priorityFix.message}</p></> : <p className="empty">Run analysis to see your highest-priority fix.</p>}</section> : null}{analysisStarted ? <section className="guidance"><h2>Plain English Summary</h2>{plainEnglishSummary ? <><h3>What you're hearing</h3><ul>{plainEnglishSummary.hearing.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>Why it’s happening</h3><ul>{plainEnglishSummary.why.map((item) => <li key={`why-${item}`}>{item}</li>)}</ul><h3>What to do next</h3><ol>{plainEnglishSummary.next.map((item) => <li key={`next-${item}`}>{item}</li>)}</ol></> : <p className="empty">Run analysis to see a beginner-friendly summary.</p>}</section> : null}
 
-  <section className="guidance"><h2>Fix Your Track — Step by Step</h2>{result ? <><p className="empty">Your Listening Coach recommends this order so each move helps the next one.</p><ol><li>{((result.clippingCount ?? 0) > 0 || (typeof result.peakDb === 'number' && result.peakDb >= -1)) ? 'Fix peaks first before chasing loudness.' : 'Fix clipping and peaks first so your loudest moments stay clean.'}</li><li>Then adjust loudness in small moves so it feels competitive without sounding crushed.</li><li>Then rebalance low-end or high-end only if the tone still feels off.</li><li>Then re-check against a reference track and confirm it translates well.</li></ol></> : <p className="empty">Run analysis to get your Listening Coach step-by-step repair order.</p>}</section>
+  <section className="guidance"><h2>Fix Your Track — Step by Step</h2>{result ? <><p className="empty">Your Listening Coach recommends this order so each move helps the next one.</p><ol><li>{((result.clippingCount ?? 0) > 0 || (typeof result.peakDb === 'number' && result.peakDb >= -1)) ? 'Fix clipping and peak safety first before chasing loudness.' : 'Peaks are already safe, so start with loudness and tone refinement.'}</li><li>Then adjust loudness in small moves so it feels competitive without sounding crushed.</li><li>Then rebalance low-end or high-end only if the tone still feels off.</li><li>Then re-check against a reference track and confirm it translates well.</li></ol></> : <p className="empty">Run analysis to get your Listening Coach step-by-step repair order.</p>}</section>
 
   {analysisStarted ? <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What to listen for</h3><ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul><h3>5) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>6) Source quality</h3><ul>{autoFixPlan.sourceQuality.map((item) => <li key={`source-${item}`}>{item}</li>)}</ul><h3>7) Release Readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>You don’t need to get it perfect.</p><p>If it sounds better than before, you’re improving.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section> : null}
 
