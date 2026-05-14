@@ -1123,6 +1123,34 @@ export default function App() {
     }
   }, [runWorkerRequest]);
 
+  const handleResetForNewTrack = useCallback(() => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
+    setAudioBuffer(null);
+    audioDataRef.current = null;
+    setFileName('No file selected');
+    setResult(null);
+    setAutoMarkers([]);
+    setAnalysisDebug(null);
+    setLargeFileWarning('');
+    setSectionResult(null);
+    setStartSec(null);
+    setEndSec(null);
+    setManualProblemAreas([]);
+    setProblemNote('');
+    setSeekToSec(null);
+    setCurrentTime(0);
+    setDuration(0);
+    setAnalysisStarted(false);
+    setAnalysisStatus('idle');
+    setAnalysisStage('Idle');
+    setStatus('Tell Studio Sense what you want to achieve, then upload audio.');
+    setLoading(false);
+    setIsAnalyzing(false);
+    setLastAnalysisError(null);
+    setSafeModeFixPlan(null);
+  }, [audioUrl]);
+
 
   const analyzeSelectedSection = useCallback(async () => {
     if (!hasSelection || !audioDataRef.current || !workerRef.current) return;
@@ -1318,6 +1346,7 @@ export default function App() {
   const isBeginnerMode = appMode === 'beginner';
   const isCreatorMode = appMode === 'creator';
   const isPreAnalysis = !analysisStarted;
+  const showNewTrackButton = Boolean(audioUrl) || analysisStarted || analysisStatus === 'complete';
 
   return (
     <main className="app-shell">
@@ -1355,6 +1384,11 @@ export default function App() {
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
           {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Analyze with Studio Sense'}
         </button>
+        {showNewTrackButton ? (
+          <button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>
+            Analyze Another Track
+          </button>
+        ) : null}
       </div>
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
       <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
@@ -1386,6 +1420,7 @@ export default function App() {
     </div>
   </section>
   <section className="workflow-row"><span className="filename">File: {fileName}</span><span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span></section>
+  {showNewTrackButton ? <section className="workflow-row"><button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>Analyze Another Track</button></section> : null}
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
   <p className="status" style={{ fontSize: "0.8rem", opacity: 0.75 }}>Debug: analysisStatus={analysisStatus} | analysisStage={analysisStage} | status={status}</p>
