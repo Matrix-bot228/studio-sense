@@ -252,15 +252,34 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
 }
 
 
-function buildSoundProfile(analysisState: CentralAnalysisState | null): string {
+function buildSoundProfile(
+  analysisState: CentralAnalysisState | null,
+  sourceQuality: SourceQualityAssessment | null,
+  userIntent: UserIntent,
+  result: AnalysisResult | null
+): string {
   if (!analysisState) return 'Analyzing sound profile…';
   const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
-  if (bassHeavy && tooQuiet) return 'Bass-heavy unmastered mix';
-  if (tooQuiet && darkTone) return 'Quiet dark mix needing gain';
-  if (tooQuiet) return 'Dynamic low-loudness master';
-  if (darkTone && !releaseReady) return 'Warm vintage-style balance';
+  const selectedNotSure = isNotSureIntent(userIntent.description);
+  const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
+  const sourceType = sourceQuality?.sourceTypeGuess ?? '';
+  const monoOrNarrow = (result?.channels ?? 2) === 1 || /mono|narrow/i.test(sourceType);
+  const lowFidelitySource = sourceQuality?.rating === 'Low Fidelity Source' || /mp3\/compressed|compressed/i.test(sourceType) || monoOrNarrow;
+
+  if (lowFidelitySource || restorationIntent) {
+    if (restorationIntent) return selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source with possible low-end buildup' : 'Archival / restoration-style source; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
+    if (monoOrNarrow && sourceQuality?.rating === 'Low Fidelity Source') return selectedNotSure ? 'Possible old / low-fidelity mono recording with low-end buildup' : 'Old / low-fidelity mono recording; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
+    if (/mp3\/compressed|compressed/i.test(sourceType)) return selectedNotSure ? 'Studio Sense suspects a compressed low-fidelity source with possible low-end buildup' : 'Compressed low-fidelity source; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
+    return selectedNotSure ? 'Studio Sense suspects source-quality limits with possible low-end buildup' : 'Source-condition-first profile; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
+  }
+
+  if (bassHeavy && tooQuiet) return selectedNotSure ? 'Possible low-end buildup in an unmastered mix' : 'Bass-heavy unmastered mix';
+  if (tooQuiet && darkTone) return selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
+  if (tooQuiet) return selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
+  if (darkTone && !releaseReady) return selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
   if (releaseReady && !analysisState.majorProblem) return 'Streaming-ready balanced master';
-  return analysisState.profile;
+  if (bassHeavy) return selectedNotSure ? 'Possible low-end buildup' : 'Bass-heavy mix profile';
+  return selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
 }
 
 function buildWhyItSoundsThisWay(result: AnalysisResult | null, analysisState: CentralAnalysisState | null): string[] {
@@ -1374,7 +1393,7 @@ export default function App() {
   const isFinalAnalysisReady = analysisStatus === 'complete' && Boolean(result) && Boolean(analysisState);
   const hasUploadedFile = Boolean(audioDataRef.current);
   const awaitingAnalysis = hasUploadedFile && !analysisStarted;
-  const soundProfile = isFinalAnalysisReady ? buildSoundProfile(analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
+  const soundProfile = isFinalAnalysisReady ? buildSoundProfile(analysisState, sourceQuality, userIntent, result) : awaitingAnalysis ? '—' : 'Waiting for analysis';
   const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : awaitingAnalysis ? ['Run analysis to explain the current sound character.'] : ['Run analysis to explain this recording.'];
   const fixSuggestions = isFinalAnalysisReady ? buildFixSuggestions(result) : [];
   const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
