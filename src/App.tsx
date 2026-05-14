@@ -1455,13 +1455,6 @@ export default function App() {
     <main className="app-shell">
       <section className="card compact">
         <header className="topbar"><div><div className="brand-row"><span className="brand-icon" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><path d="M12 38V31C12 19.4 21.4 10 33 10s21 9.4 21 21v7" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"/><rect x="9" y="33" width="11" height="20" rx="5" fill="currentColor"/><rect x="46" y="33" width="11" height="20" rx="5" fill="currentColor"/></svg></span><h1>Studio Sense</h1></div><p className="subhead">Interactive listening + section mastering check</p><p className="subhead">Your beginner listening coach for understanding and improving music quality.</p></div></header>
-        <section className="workflow-row">
-          {audioUrl && (
-            <button type="button" className="upload-btn" onClick={handleNewTrack}>
-              New Track
-            </button>
-          )}
-        </section>
   {isPreAnalysis ? (
   <>
     <section className="guidance pre-analysis-workflow">
@@ -1491,6 +1484,7 @@ export default function App() {
       </div>
       <div className="workflow-row">
         {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
+        {audioUrl ? <button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
       </div>
       <div className="workflow-row">
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
@@ -1530,6 +1524,7 @@ export default function App() {
   <section className="workflow-row">
     <span className="filename">File: {fileName}</span>
     <span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span>
+    {audioUrl ? <button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
   </section>
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
