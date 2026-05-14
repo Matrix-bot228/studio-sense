@@ -699,6 +699,23 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
   return { wrong: dedupe(wrong), matters: dedupe(matters), first: dedupe(prioritizedFirst).slice(0, 4), listenFor: dedupe(listenFor), avoid: dedupe(avoid).slice(0, 3), readiness: dedupe(readiness).slice(0, 1), sourceQuality: dedupe(sourceQualityNotes).slice(0, 1) };
 }
 
+
+
+type GoalVsFoundSummary = { audioFinding: string; matchResult: string };
+
+function buildGoalVsFoundSummary(result: AnalysisResult | null, userIntent: UserIntent): GoalVsFoundSummary {
+  if (!result) return { audioFinding: 'Run analysis to compare your issue with measured audio data.', matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
+  const d = userIntent.description.toLowerCase();
+  const low = result.lowPercent ?? 0;
+  const high = result.highPercent ?? 0;
+  const mid = result.midPercent ?? 0;
+  const lufs = result.lufsEstimate ?? result.lufs;
+  if (/(bass|low end|low-end|boomy|rumble|muddy)/i.test(d)) return low > 45 ? { audioFinding: `Low-end is elevated (${low.toFixed(0)}%), matching your bass concern.`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Low-end is not dominant (${low.toFixed(0)}%), so another issue may be more important.`, matchResult: 'Not the main issue: the scan found a different priority.' };
+  if (/(vocal|voice|lyrics|clarity)/i.test(d)) return (low > 40 || high < 16 || mid < 20) ? { audioFinding: `Vocal masking risk: low-end ${low.toFixed(0)}% with limited mid/high support can hide lyrics.`, matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' } : { audioFinding: 'The spectrum does not show strong vocal masking as the top priority.', matchResult: 'Not the main issue: the scan found a different priority.' };
+  if (/(quiet|loud|volume|streaming)/i.test(d) && typeof lufs === 'number') return lufs < -14 ? { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS (about ${Math.abs(-14 - lufs).toFixed(1)} LUFS below -14).`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS and already near common streaming range.`, matchResult: 'Not the main issue: the scan found a different priority.' };
+  if (/(harsh|sharp|painful|bright)/i.test(d)) return (high > 28) ? { audioFinding: `High/upper-mid energy is elevated (${high.toFixed(0)}%), consistent with harshness.`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Highs are not elevated (${high.toFixed(0)}%); harshness may be distortion or source quality related.`, matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
+  return { audioFinding: 'Measured audio shows a different main priority than your written issue.', matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
+}
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 function toneForSourceQuality(value?: SourceQualityCategory): BadgeTone {
   if (value === 'Professional Studio Source') return 'good';
@@ -1370,6 +1387,7 @@ export default function App() {
   const isBeginnerMode = appMode === 'beginner';
   const isCreatorMode = appMode === 'creator';
   const isPreAnalysis = !analysisStarted;
+  const goalVsFound = buildGoalVsFoundSummary(result, userIntent);
   const hasTrackContext = Boolean(audioUrl) || (fileName.trim().length > 0 && fileName !== 'No file selected');
   const showNewTrackButton = hasTrackContext;
 
@@ -1419,6 +1437,7 @@ export default function App() {
       <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
       <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
+  {isBeginnerMode ? <section className="guidance"><h2>Your Goal vs What Studio Sense Found</h2><p><strong>User goal:</strong> {userIntent.genre} → {userIntent.outcome}</p><p><strong>User issue:</strong> {userIntent.description.trim() || 'No issue described yet.'}</p><p><strong>Audio finding:</strong> {goalVsFound.audioFinding}</p><p><strong>Match result:</strong> {goalVsFound.matchResult}</p></section> : null}
       {audioUrl ? <AudioPlayer
         audioUrl={audioUrl}
         startSec={startSec}
@@ -1474,7 +1493,7 @@ export default function App() {
   <section className="guidance"><h2>Intent-Aware Coach</h2>{intentAwareCoach ? <><p><strong>What you’re aiming for:</strong> {intentAwareCoach.goal}{userIntent.description ? ` — ${userIntent.description}` : ''}</p><p><strong>What matters most for this goal:</strong> {intentAwareCoach.matters}</p><p><strong>What to fix first:</strong> {intentAwareCoach.fixFirst}</p><p><strong>What to avoid:</strong> {intentAwareCoach.avoid}</p><p><strong>Realistic outcome:</strong> {intentAwareCoach.realistic}</p></> : <p className="empty">Set your intent and run analysis for goal-aware coaching.</p>}</section>
 
 
-  <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} clipping={result?.clippingCount} rms={result?.rmsDb} channels={result?.channels} sourceQuality={sourceQuality?.rating} balance={{ low: result?.lowPercent ?? 0, mid: result?.midPercent ?? 0, high: result?.highPercent ?? 0 }} mainFrequencyIssue={frequencyFeel ? `${frequencyFeel.range} (${frequencyFeel.mainIssue})` : null} isCreatorMode={isCreatorMode} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
+  <ListeningCoach lufs={result?.lufsEstimate ?? result?.lufs} peak={result?.peakDb} clipping={result?.clippingCount} rms={result?.rmsDb} channels={result?.channels} sourceQuality={sourceQuality?.rating} balance={{ low: result?.lowPercent ?? 0, mid: result?.midPercent ?? 0, high: result?.highPercent ?? 0 }} mainFrequencyIssue={frequencyFeel ? `${frequencyFeel.range} (${frequencyFeel.mainIssue})` : null} isCreatorMode={isCreatorMode} userIntent={userIntent} /><section className="guidance"><h2>🎧 Listening Coach</h2>{listeningCoach ? <><h3>🎧 Quick Summary</h3><ul>{listeningCoach.quickSummary.map((item) => <li key={`coach-quick-${item}`}>{item}</li>)}</ul><h3>⚠️ What Matters</h3><ul>{listeningCoach.whatMatters.map((item) => <li key={`coach-matters-${item}`}>{item}</li>)}</ul><h3>🛠️ What To Do First</h3><ol>{listeningCoach.whatToDoFirst.map((item) => <li key={`coach-first-${item}`}>{item}</li>)}</ol><h3>🎧 What to listen for</h3><ul>{listeningCoach.whatToListenFor.map((item) => <li key={`coach-listen-${item}`}>{item}</li>)}</ul><h3>🚫 What NOT To Do</h3><ul>{listeningCoach.whatNotToDo.map((item) => <li key={`coach-avoid-${item}`}>{item}</li>)}</ul><h3>🎯 Coach Note</h3><p>{listeningCoach.coachNote}</p></> : <p className="empty">Run analysis to unlock your beginner-friendly Listening Coach plan.</p>}</section>
   <section className="guidance"><h2>🟦 Listening Coach: Listening Coaching Mode</h2><div className="workflow-row"><button className="upload-btn" type="button" onClick={() => setListeningCoachingModeEnabled((v) => !v)}>{listeningCoachingModeEnabled ? 'Mode: On' : 'Mode: Off'}</button></div>{listeningCoachingMode ? <><p>{listeningCoachingMode.intro}</p><h3>Dynamic feedback</h3><ul>{listeningCoachingMode.dynamicFeedback.map((item) => <li key={`dynamic-${item}`}>{item}</li>)}</ul><h3>Fix Order</h3><ol>{listeningCoachingMode.fixOrder.map((step) => <li key={step}>{step}</li>)}</ol></> : <p className="empty">Turn on Listening Coaching Mode and run analysis to get guided feedback.</p>}</section>
   {isCreatorMode ? <section className="verdicts"><h2>Whole Track Analysis</h2>{analysisStarted ? (verdictItems.length > 0 ? <ul>{verdictItems.map((item) => <li key={item.label}><span className={`pill ${item.tone}`}>{item.label}</span><span>{item.text}</span></li>)}</ul> : <p className="empty">Run analysis to see verdicts.</p>) : <p className="empty">No analysis yet.</p>}</section> : null}
 
