@@ -1015,6 +1015,7 @@ export default function App() {
   const [appMode, setAppMode] = useState<AppMode>('beginner');
   const [userIntent, setUserIntent] = useState<UserIntent>(DEFAULT_USER_INTENT);
   const workerRef = useRef<Worker | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
   const requestIdRef = useRef(0);
 
@@ -1193,7 +1194,14 @@ export default function App() {
     }
   }, [runWorkerRequest]);
 
+  const stopCurrentAnalysis = useCallback(() => {
+    workerRef.current?.terminate();
+    workerRef.current = new Worker(new URL('./workers/audioWorker.ts', import.meta.url), { type: 'module' });
+    requestIdRef.current += 1;
+  }, []);
+
   const handleResetForNewTrack = useCallback(() => {
+    stopCurrentAnalysis();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
     setAudioBuffer(null);
@@ -1214,12 +1222,13 @@ export default function App() {
     setAnalysisStarted(false);
     setAnalysisStatus('idle');
     setAnalysisStage('Idle');
-    setStatus('Tell Studio Sense what you want to achieve, then upload audio.');
+    setStatus('Ready to upload another track.');
     setLoading(false);
     setIsAnalyzing(false);
     setLastAnalysisError(null);
     setSafeModeFixPlan(null);
-  }, [audioUrl]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [audioUrl, stopCurrentAnalysis]);
 
 
   const analyzeSelectedSection = useCallback(async () => {
@@ -1474,18 +1483,20 @@ export default function App() {
       <textarea value={userIntent.description} placeholder="Example: Warm late-night blues, I want the vocal clear but keep the vintage feel." onChange={(e) => setUserIntent((prev) => ({ ...prev, description: e.target.value }))} />
       <div className="workflow-row">
         <label className="upload-btn" htmlFor="audio-upload">{isAnalyzing ? 'Analyzing…' : 'Upload Audio'}</label>
-        <input id="audio-upload" type="file" accept="audio/*" onChange={handleFileUpload} disabled={loading} />
+        <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/*" onChange={handleFileUpload} disabled={loading} />
       </div>
-      {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
+      <div className="workflow-row">
+        {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
+        {showNewTrackButton ? (
+          <button className="upload-btn new-track-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>
+            New Track
+          </button>
+        ) : null}
+      </div>
       <div className="workflow-row">
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
           {analysisStatus === 'processing' ? 'Studio Sense is analyzing your recording...' : 'Analyze with Studio Sense'}
         </button>
-        {showNewTrackButton ? (
-          <button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>
-            New Track
-          </button>
-        ) : null}
       </div>
       <p className="status">{analysisStatus === 'processing' ? `Studio Sense is analyzing your recording... (${analysisStage})` : status}</p>
       <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
@@ -1520,7 +1531,7 @@ export default function App() {
   <section className="workflow-row">
     <span className="filename">File: {fileName}</span>
     <span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span>
-    {showNewTrackButton ? <button className="upload-btn start-analysis-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
+    {showNewTrackButton ? <button className="upload-btn new-track-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
   </section>
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>

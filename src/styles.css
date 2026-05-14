@@ -427,4 +427,12 @@ button.upload-btn:disabled,
   padding: 12px 16px;
 }
 
+.new-track-btn {
+  border-color: #ffcc4d;
+  background: linear-gradient(180deg, #ffb347 0%, #f17f00 100%);
+  color: #1f1300;
+  font-weight: 800;
+  box-shadow: 0 0 0 2px rgba(255, 179, 71, 0.3), 0 6px 16px rgba(241, 127, 0, 0.35);
+}
+
 .tiny-note { font-size: 0.78rem; opacity: 0.8; margin-top: 0.25rem; }
