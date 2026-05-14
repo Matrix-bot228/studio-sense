@@ -704,17 +704,70 @@ function buildAutoFixPlan(result: AnalysisResult, sourceQuality: SourceQualityAs
 type GoalVsFoundSummary = { audioFinding: string; matchResult: string };
 
 function buildGoalVsFoundSummary(result: AnalysisResult | null, userIntent: UserIntent): GoalVsFoundSummary {
-  if (!result) return { audioFinding: 'Run analysis to compare your issue with measured audio data.', matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
+  if (!result) return { audioFinding: 'Run analysis to compare your issue with measured audio data.', matchResult: 'Partly confirmed' };
   const d = userIntent.description.toLowerCase();
   const low = result.lowPercent ?? 0;
   const high = result.highPercent ?? 0;
   const mid = result.midPercent ?? 0;
   const lufs = result.lufsEstimate ?? result.lufs;
-  if (/(bass|low end|low-end|boomy|rumble|muddy)/i.test(d)) return low > 45 ? { audioFinding: `Low-end is elevated (${low.toFixed(0)}%), matching your bass concern.`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Low-end is not dominant (${low.toFixed(0)}%), so another issue may be more important.`, matchResult: 'Not the main issue: the scan found a different priority.' };
-  if (/(vocal|voice|lyrics|clarity)/i.test(d)) return (low > 40 || high < 16 || mid < 20) ? { audioFinding: `Vocal masking risk: low-end ${low.toFixed(0)}% with limited mid/high support can hide lyrics.`, matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' } : { audioFinding: 'The spectrum does not show strong vocal masking as the top priority.', matchResult: 'Not the main issue: the scan found a different priority.' };
-  if (/(quiet|loud|volume|streaming)/i.test(d) && typeof lufs === 'number') return lufs < -14 ? { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS (about ${Math.abs(-14 - lufs).toFixed(1)} LUFS below -14).`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS and already near common streaming range.`, matchResult: 'Not the main issue: the scan found a different priority.' };
-  if (/(harsh|sharp|painful|bright)/i.test(d)) return (high > 28) ? { audioFinding: `High/upper-mid energy is elevated (${high.toFixed(0)}%), consistent with harshness.`, matchResult: 'Confirmed: the audio supports your concern.' } : { audioFinding: `Highs are not elevated (${high.toFixed(0)}%); harshness may be distortion or source quality related.`, matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
-  return { audioFinding: 'Measured audio shows a different main priority than your written issue.', matchResult: 'Partly confirmed: your concern is present, but another issue is bigger.' };
+  if (/(bass|low end|low-end|boomy|rumble|muddy)/i.test(d)) return low > 45 ? { audioFinding: `Low-end is elevated (${low.toFixed(0)}%), matching your bass concern.`, matchResult: 'Confirmed' } : { audioFinding: `Low-end is not dominant (${low.toFixed(0)}%), so another issue may be more important.`, matchResult: 'Not the main issue' };
+  if (/(vocal|voice|lyrics|clarity)/i.test(d)) return (low > 40 || high < 16 || mid < 20) ? { audioFinding: `Vocal masking risk: low-end ${low.toFixed(0)}% with limited mid/high support can hide lyrics.`, matchResult: 'Partly confirmed' } : { audioFinding: 'The spectrum does not show strong vocal masking as the top priority.', matchResult: 'Not the main issue' };
+  if (/(quiet|loud|volume|streaming)/i.test(d) && typeof lufs === 'number') return lufs < -14 ? { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS (about ${Math.abs(-14 - lufs).toFixed(1)} LUFS below -14).`, matchResult: 'Confirmed' } : { audioFinding: `Loudness is ${lufs.toFixed(1)} LUFS and already near common streaming range.`, matchResult: 'Not the main issue' };
+  if (/(harsh|sharp|painful|bright)/i.test(d)) return (high > 28) ? { audioFinding: `High/upper-mid energy is elevated (${high.toFixed(0)}%), consistent with harshness.`, matchResult: 'Confirmed' } : { audioFinding: `Highs are not elevated (${high.toFixed(0)}%); harshness may be distortion or source quality related.`, matchResult: 'Partly confirmed' };
+  if (isNotSureIntent(userIntent.description)) return { audioFinding: 'You selected Not sure, so Studio Sense looked for the strongest problem.', matchResult: 'Partly confirmed' };
+  return { audioFinding: 'Measured audio shows a different main priority than your written issue.', matchResult: 'Partly confirmed' };
+}
+
+
+type SecondOpinion = {
+  intro: string;
+  soundsOff: string;
+  likelyCause: string;
+  confidence: string;
+  fixFirst: string;
+  doNotDo: string;
+};
+
+function isNotSureIntent(description: string): boolean {
+  const d = description.trim().toLowerCase();
+  if (!d.length) return true;
+  return /(not sure|unsure|don't know|do not know|no idea|can'?t tell|cant tell|unknown|help me find|figure out)/i.test(d);
+}
+
+function buildSecondOpinion(result: AnalysisResult | null, analysisState: CentralAnalysisState | null, priorityFix: { title: string; message: string } | null, userIntent: UserIntent): SecondOpinion {
+  if (!result || !analysisState) {
+    return {
+      intro: 'Run analysis to get your Second Opinion.',
+      soundsOff: 'Need audio analysis first.',
+      likelyCause: 'Need audio analysis first.',
+      confidence: '—',
+      fixFirst: 'Upload a track and run analysis.',
+      doNotDo: 'Do not make big changes before the analysis.'
+    };
+  }
+  const notSure = isNotSureIntent(userIntent.description);
+  const low = result.lowPercent ?? 0;
+  const high = result.highPercent ?? 0;
+  const lufs = result.lufsEstimate ?? result.lufs;
+  const clipping = result.clippingCount ?? 0;
+
+  let hearing = 'Yes — something sounds off.';
+  if (analysisState.releaseReady && !analysisState.majorProblem) hearing = 'No major issue detected right now.';
+
+  let likelyCause = 'The strongest issue appears to be tonal balance.';
+  if (clipping > 0) likelyCause = `The strongest issue is clipping distortion (${clipping} clipped samples), which can sound crunchy or harsh.`;
+  else if (typeof lufs === 'number' && lufs < -16) likelyCause = `The track is likely too quiet (${lufs.toFixed(1)} LUFS), so it may feel weak next to reference songs.`;
+  else if (low > 45) likelyCause = `Low-end buildup (${low.toFixed(0)}%) is likely masking clarity, so the mix can feel boomy.`;
+  else if (high > 28) likelyCause = `Upper highs are elevated (${high.toFixed(0)}%), which can make the sound feel sharp.`;
+
+  return {
+    intro: notSure ? 'You selected Not sure, so Studio Sense looked for the strongest problem.' : 'Studio Sense compared your issue with the measured audio and picked the strongest priority.',
+    soundsOff: hearing,
+    likelyCause,
+    confidence: analysisState.confidence,
+    fixFirst: priorityFix?.message ?? 'Start with peak safety and clipping, then re-check loudness and tone.',
+    doNotDo: 'Do not stack multiple big EQ/limiter moves at once. Change one thing, then listen again.'
+  };
 }
 function toneForReadiness(value?: ReadinessCategory): BadgeTone { if (value === 'Release Ready') return 'good'; if (value === 'Needs Work') return 'warn'; if (value === 'Problem Area') return 'bad'; return 'info'; }
 function toneForSourceQuality(value?: SourceQualityCategory): BadgeTone {
@@ -1388,6 +1441,7 @@ export default function App() {
   const isCreatorMode = appMode === 'creator';
   const isPreAnalysis = !analysisStarted;
   const goalVsFound = buildGoalVsFoundSummary(result, userIntent);
+  const secondOpinion = buildSecondOpinion(result, analysisState, priorityFix, userIntent);
   const hasTrackContext = Boolean(audioUrl) || (fileName.trim().length > 0 && fileName !== 'No file selected');
   const showNewTrackButton = hasTrackContext;
 
@@ -1471,6 +1525,8 @@ export default function App() {
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
   <p className="status" style={{ fontSize: "0.8rem", opacity: 0.75 }}>Debug: analysisStatus={analysisStatus} | analysisStage={analysisStage} | status={status}</p>
+  {isBeginnerMode ? <section className="guidance"><h2>Second Opinion</h2><p>{secondOpinion.intro}</p><p><strong>Does something sound off?</strong> {secondOpinion.soundsOff}</p><p><strong>What is most likely causing it?</strong> {secondOpinion.likelyCause}</p><p><strong>How confident is Studio Sense?</strong> {secondOpinion.confidence}</p><p><strong>What should I fix first?</strong> {secondOpinion.fixFirst}</p><p><strong>One thing not to do:</strong> {secondOpinion.doNotDo}</p></section> : null}
+
   {audioUrl && <AudioPlayer
     audioUrl={audioUrl}
     startSec={startSec}
