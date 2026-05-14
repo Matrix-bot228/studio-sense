@@ -1484,7 +1484,6 @@ export default function App() {
       </div>
       <div className="workflow-row">
         {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
-        {audioUrl ? <button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
       </div>
       <div className="workflow-row">
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
@@ -1495,6 +1494,7 @@ export default function App() {
       <p className="status">Debug: status={analysisStatus} | stage={analysisStage} | lastError={lastAnalysisError ?? 'none'}</p>
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
       <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
+      {audioUrl ? <div className="workflow-row"><button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button></div> : null}
   {isBeginnerMode ? <section className="guidance"><h2>Your Goal vs What Studio Sense Found</h2><p><strong>User goal:</strong> {userIntent.genre} → {userIntent.outcome}</p><p><strong>User issue:</strong> {userIntent.description.trim() || 'No issue described yet.'}</p><p><strong>Audio finding:</strong> {goalVsFound.audioFinding}</p><p><strong>Match result:</strong> {goalVsFound.matchResult}</p></section> : null}
       {audioUrl ? <AudioPlayer
         audioUrl={audioUrl}
