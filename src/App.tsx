@@ -1200,7 +1200,7 @@ export default function App() {
     requestIdRef.current += 1;
   }, []);
 
-  const handleResetForNewTrack = useCallback(() => {
+  const handleNewTrack = useCallback(() => {
     stopCurrentAnalysis();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
@@ -1451,8 +1451,7 @@ export default function App() {
   const isPreAnalysis = !analysisStarted;
   const goalVsFound = buildGoalVsFoundSummary(result, userIntent);
   const secondOpinion = buildSecondOpinion(result, analysisState, priorityFix, userIntent);
-  const hasTrackContext = Boolean(audioUrl) || (fileName.trim().length > 0 && fileName !== 'No file selected');
-  const showNewTrackButton = hasTrackContext;
+  const showNewTrackButton = Boolean(audioUrl) || (fileName.trim().length > 0 && fileName !== 'No file selected');
 
   return (
     <main className="app-shell">
@@ -1488,7 +1487,7 @@ export default function App() {
       <div className="workflow-row">
         {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
         {showNewTrackButton ? (
-          <button className="upload-btn new-track-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>
+          <button className="upload-btn new-track-btn" type="button" onClick={handleNewTrack} disabled={loading || isAnalyzing}>
             New Track
           </button>
         ) : null}
@@ -1531,7 +1530,7 @@ export default function App() {
   <section className="workflow-row">
     <span className="filename">File: {fileName}</span>
     <span className={`pill ${loading ? "info" : "good"}`}>{loading ? "Processing" : "Ready"}</span>
-    {showNewTrackButton ? <button className="upload-btn new-track-btn" type="button" onClick={handleResetForNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
+    {showNewTrackButton ? <button className="upload-btn new-track-btn" type="button" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
   </section>
   <p className="status">{status}</p>
   <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
