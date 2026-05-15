@@ -280,7 +280,7 @@ function buildSoundProfile(
   const context = result ? getSourceContext(result, sourceType) : null;
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
   const sourceQualityLabel = sourceQuality?.rating ?? '';
-  const lowFidelitySource = sourceQualityLabel === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
+  const isLowFidelitySource = sourceQualityLabel === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
   const sourceRecommendationNotRecommended = sourceQuality?.masteringReadiness === 'Not Recommended';
   const stereoWidth = context?.stereoWidth ?? (monoOrNarrow ? 'Narrow stereo' : 'Stereo');
   const highFrequencyRolloff = context?.highFrequencyRolloff ?? false;
@@ -291,7 +291,41 @@ function buildSoundProfile(
   const multiplePoorSpectralIndicators = (context?.poorSpectralIndicators ?? 0) >= 2;
   const monoOrNarrowWithPoorIndicators = monoOrNarrow && (multiplePoorSpectralIndicators || weakRms || unstablePeaks || archivalSignalCount >= 2);
   const compressedWithExtraProblems = isCompressed && (monoOrNarrow || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalIndicators || multiplePoorSpectralIndicators);
-  const sourceAwareOverride = lowFidelitySource || sourceRecommendationNotRecommended || monoOrNarrowWithPoorIndicators || archivalIndicators || (archivalSignalCount >= 3) || compressedWithExtraProblems;
+  const hasGameOrVintageIndicators = /game|console|sega|nintendo|chiptune|8-bit|16-bit|retro|vintage/i.test(sourceType)
+    || (typeof result?.sampleRate === 'number' && result.sampleRate <= 24000 && multiplePoorSpectralIndicators);
+  const sourceAwareOverride = sourceRecommendationNotRecommended || monoOrNarrowWithPoorIndicators || archivalIndicators || (archivalSignalCount >= 3) || compressedWithExtraProblems;
+
+  if (isLowFidelitySource) {
+    let finalProfile: string;
+    if (monoOrNarrow && archivalIndicators) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
+      analysisState.primaryIssue = 'old or narrow low-fidelity recording';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', isMono ? 'Mono' : 'Narrow stereo']));
+    } else if (monoOrNarrow) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity narrow recording' : `${isMono ? 'Low-fidelity mono recording' : 'Low-fidelity narrow recording'}`;
+      analysisState.primaryIssue = 'limited stereo width / low-fidelity source';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', isMono ? 'Mono' : 'Narrow stereo']));
+    } else if (archivalIndicators || restorationIntent) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
+      analysisState.primaryIssue = 'source recording quality limits the final sound';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Dark', 'Tape-like']));
+    } else if (hasGameOrVintageIndicators) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity game / vintage source' : 'Low-fidelity game / vintage source';
+      analysisState.primaryIssue = 'limited-bandwidth vintage source';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Limited bandwidth']));
+    } else {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity source recording' : 'Low-fidelity source recording';
+      analysisState.primaryIssue = 'source quality limits the final sound';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity']));
+    }
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, hasGameOrVintageIndicators, finalSoundProfileTitle: finalProfile });
+    return finalProfile;
+  }
 
   if (sourceAwareOverride || restorationIntent) {
     let finalProfile: string;
