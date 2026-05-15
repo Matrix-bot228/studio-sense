@@ -270,6 +270,7 @@ function buildSoundProfile(
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
   const lowFidelitySource = sourceQuality?.rating === 'Low Fidelity Source';
   const selectedIssue = userIntent.description || 'Not specified';
+  const sourceAwareIndicators = monoOrNarrow || archivalSignalCount >= 3;
 
   if (lowFidelitySource || restorationIntent) {
     let finalProfile: string;
@@ -287,7 +288,9 @@ function buildSoundProfile(
   }
 
   let finalProfile = selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
-  if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
+  if (sourceAwareIndicators && sourceQuality?.rating === 'Standard Compressed Audio') {
+    finalProfile = monoOrNarrow ? 'Low-fidelity mono recording' : 'Archival / restoration-style source';
+  } else if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
   else if (tooQuiet && darkTone) finalProfile = selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
   else if (tooQuiet) finalProfile = selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
   else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
@@ -900,7 +903,7 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
     };
   }
 
-  if (isCompressed && stereo && clippingCount === 0 && balancedTone && strongSignal) {
+  if (isCompressed && stereo && clippingCount === 0 && balancedTone && strongSignal && poorCompressedIndicators <= 1) {
     return {
       rating: 'Good Production Source',
       confidence: 80,
