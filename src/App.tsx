@@ -219,6 +219,7 @@ type SourceContext = {
   isWav: boolean;
   isCompressed: boolean;
   isMono: boolean;
+  stereoWidth: 'Mono' | 'Narrow stereo' | 'Stereo';
   isStemName: boolean;
   isVocalStem: boolean;
   isInstrumentStem: boolean;
@@ -226,6 +227,11 @@ type SourceContext = {
   isStemKeywordWav: boolean;
   archivalSignalCount: number;
   poorSpectralIndicators: number;
+  highFrequencyRolloff: boolean;
+  noisyHighs: boolean;
+  unstablePeaks: boolean;
+  weakRms: boolean;
+  archivalIndicators: boolean;
 };
 
 function getSourceContext(result: AnalysisResult, fileName: string): SourceContext {
@@ -234,6 +240,7 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
   const isWav = extension === 'wav' || extension === 'wave';
   const isCompressed = ['mp3', 'm4a', 'aac', 'ogg'].includes(extension);
   const isMono = (result.channels ?? 0) === 1;
+  const stereoWidth: SourceContext['stereoWidth'] = isMono ? 'Mono' : (typeof result.midPercent === 'number' && result.midPercent > 72 ? 'Narrow stereo' : 'Stereo');
   const isStemName = /(acappella|vocal|vox|stem|multitrack|closemic|mic|di|raw|saxophone|drums|bass|guitar|piano|overhead|room)/i.test(normalizedName);
   const isVocalStem = /(acappella|vocal|vox)/i.test(normalizedName);
   const isInstrumentStem = /(saxophone|drums|bass|guitar|piano|overhead|room|di|closemic)/i.test(normalizedName);
@@ -248,7 +255,11 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
   const compressedArchival = isCompressed && archivalName;
   const poorSpectralIndicators = [severeRolloff, cassetteLikeBalance, noisyHighs].filter(Boolean).length;
   const archivalSignalCount = [archivalName, isMono, weakRms, unstablePeaks, severeRolloff, cassetteLikeBalance, noisyHighs, compressedArchival].filter(Boolean).length;
-  return { isWav, isCompressed, isMono, isStemName, isVocalStem, isInstrumentStem, isLikelyStem: isWav && isStemName, isStemKeywordWav: isWav && isStemName, archivalSignalCount, poorSpectralIndicators };
+  return {
+    isWav, isCompressed, isMono, stereoWidth, isStemName, isVocalStem, isInstrumentStem,
+    isLikelyStem: isWav && isStemName, isStemKeywordWav: isWav && isStemName, archivalSignalCount, poorSpectralIndicators,
+    highFrequencyRolloff: severeRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators: archivalName || compressedArchival || cassetteLikeBalance
+  };
 }
 
 
@@ -266,37 +277,52 @@ function buildSoundProfile(
   const isCompressed = /mp3\/compressed|compressed/i.test(sourceType);
   const isMono = (result?.channels ?? 2) === 1;
   const monoOrNarrow = isMono || /mono|narrow/i.test(sourceType);
-  const context = result ? getSourceContext(result, '') : null;
+  const context = result ? getSourceContext(result, sourceType) : null;
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
-  const lowFidelitySource = sourceQuality?.rating === 'Low Fidelity Source';
-  const selectedIssue = userIntent.description || 'Not specified';
-  const sourceAwareIndicators = monoOrNarrow || archivalSignalCount >= 3;
+  const sourceQualityLabel = sourceQuality?.rating ?? '';
+  const lowFidelitySource = sourceQualityLabel === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
+  const sourceRecommendationNotRecommended = sourceQuality?.masteringReadiness === 'Not Recommended';
+  const stereoWidth = context?.stereoWidth ?? (monoOrNarrow ? 'Narrow stereo' : 'Stereo');
+  const highFrequencyRolloff = context?.highFrequencyRolloff ?? false;
+  const noisyHighs = context?.noisyHighs ?? false;
+  const unstablePeaks = context?.unstablePeaks ?? false;
+  const weakRms = context?.weakRms ?? false;
+  const archivalIndicators = context?.archivalIndicators ?? false;
+  const multiplePoorSpectralIndicators = (context?.poorSpectralIndicators ?? 0) >= 2;
+  const monoOrNarrowWithPoorIndicators = monoOrNarrow && (multiplePoorSpectralIndicators || weakRms || unstablePeaks || archivalSignalCount >= 2);
+  const compressedWithExtraProblems = isCompressed && (monoOrNarrow || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalIndicators || multiplePoorSpectralIndicators);
+  const sourceAwareOverride = lowFidelitySource || sourceRecommendationNotRecommended || monoOrNarrowWithPoorIndicators || archivalIndicators || (archivalSignalCount >= 3) || compressedWithExtraProblems;
 
-  if (lowFidelitySource || restorationIntent) {
+  if (sourceAwareOverride || restorationIntent) {
     let finalProfile: string;
-    if (restorationIntent || archivalSignalCount >= 3) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source with possible low-end buildup' : 'Archival / restoration-style source';
-    } else if (monoOrNarrow) {
-      finalProfile = selectedNotSure ? 'Possible low-fidelity mono recording with low-end buildup' : 'Low-fidelity mono recording';
-    } else if (isCompressed) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects source-quality limits in a compressed file' : 'Source-condition-first profile; compressed source with quality limits';
+    if (monoOrNarrow && (sourceAwareOverride || restorationIntent)) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono/narrow source' : 'Low-fidelity mono recording';
+      analysisState.primaryIssue = 'limited source quality, mono/narrow image, and archival-style balance';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', isMono ? 'Mono' : 'Narrow stereo']));
+    } else if (compressedWithExtraProblems) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects source-limited compressed audio' : 'Source-limited compressed recording';
+      analysisState.primaryIssue = 'compressed source quality is affecting clarity and loudness';
+      analysisState.confidence = analysisState.confidence === 'Low' ? 'Medium' : 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Compressed', 'Dark', 'Limited bandwidth']));
     } else {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects source-quality limits with possible low-end buildup' : 'Source-condition-first profile; primary issue is source quality';
+      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
+      analysisState.primaryIssue = 'source recording quality limits the final sound';
+      analysisState.confidence = 'High';
+      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Dark', 'Tape-like']));
     }
-    console.debug('[Studio Sense] Sound Profile Decision', { sourceQuality: sourceQuality?.rating ?? '—', sourceType, isCompressed, isMono, archivalSignalCount, bassHeavy, tooQuiet, selectedIssue, finalSoundProfile: finalProfile });
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
     return finalProfile;
   }
 
   let finalProfile = selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
-  if (sourceAwareIndicators && sourceQuality?.rating === 'Standard Compressed Audio') {
-    finalProfile = monoOrNarrow ? 'Low-fidelity mono recording' : 'Archival / restoration-style source';
-  } else if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
+  if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
   else if (tooQuiet && darkTone) finalProfile = selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
   else if (tooQuiet) finalProfile = selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
   else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
   else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
   else if (bassHeavy) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
-  console.debug('[Studio Sense] Sound Profile Decision', { sourceQuality: sourceQuality?.rating ?? '—', sourceType, isCompressed, isMono, archivalSignalCount, bassHeavy, tooQuiet, selectedIssue, finalSoundProfile: finalProfile });
+  console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
   return finalProfile;
 }
 
