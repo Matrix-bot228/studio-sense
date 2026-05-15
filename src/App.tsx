@@ -29,6 +29,16 @@ type AnalysisResult = {
   balanceVerdict?: string;
   masteringSuggestion?: string;
   readiness?: ReadinessCategory;
+  soundProfile?: string;
+  sourceQuality?: {
+    isLowFidelitySource: boolean;
+    isCompressedSource: boolean;
+    isMono: boolean;
+    isNotRecommended: boolean;
+    sourceType: string;
+    channels: number;
+    recommendation: string;
+  };
 };
 type AnalysisDebug = {
   bandEnergy?: Record<string, number>;
@@ -1477,7 +1487,9 @@ export default function App() {
   const isFinalAnalysisReady = analysisStatus === 'complete' && Boolean(result) && Boolean(analysisState);
   const hasUploadedFile = Boolean(audioDataRef.current);
   const awaitingAnalysis = hasUploadedFile && !analysisStarted;
-  const soundProfile = isFinalAnalysisReady ? buildSoundProfile(analysisState, sourceQuality, userIntent, result) : awaitingAnalysis ? '—' : 'Waiting for analysis';
+  const soundProfile = isFinalAnalysisReady
+    ? buildSoundProfile(analysisState, sourceQuality, userIntent, result) || result?.soundProfile || 'Waiting for analysis'
+    : awaitingAnalysis ? '—' : (result?.soundProfile || 'Waiting for analysis');
   const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : awaitingAnalysis ? ['Run analysis to explain the current sound character.'] : ['Run analysis to explain this recording.'];
   const fixSuggestions = isFinalAnalysisReady ? buildFixSuggestions(result) : [];
   const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
