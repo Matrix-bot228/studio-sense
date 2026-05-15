@@ -23,6 +23,16 @@ type AnalysisResult = {
   balanceVerdict?: string;
   masteringSuggestion?: string;
   readiness?: ReadinessCategory;
+  soundProfile?: string;
+  sourceQuality?: {
+    isLowFidelitySource: boolean;
+    isCompressedSource: boolean;
+    isMono: boolean;
+    isNotRecommended: boolean;
+    sourceType: string;
+    channels: number;
+    recommendation: string;
+  };
 };
 
 type ProblemMarker = {
@@ -267,6 +277,31 @@ function analyzeQuick(channelsData: Float32Array[], sampleRate: number, duration
 }
 function buildProblemMarkers(_result: AnalysisResult): ProblemMarker[] { return []; }
 
+function buildSourceQuality(result: AnalysisResult): NonNullable<AnalysisResult['sourceQuality']> {
+  const channels = result.channels ?? 2;
+  const isMono = channels === 1;
+  const isCompressedSource = typeof result.sampleRate === 'number' && result.sampleRate <= 32000;
+  const isLowFidelitySource = Boolean(
+    isMono
+    || isCompressedSource
+    || (result.clippingCount ?? 0) > 2
+    || (typeof result.highPercent === 'number' && result.highPercent < 10)
+    || (typeof result.rmsDb === 'number' && result.rmsDb < -21)
+  );
+  const isNotRecommended = Boolean(
+    result.readiness === 'Problem Area'
+    || (result.clippingCount ?? 0) > 4
+    || (isCompressedSource && isMono)
+  );
+  const sourceType = `${isLowFidelitySource ? 'Low Fidelity Source' : 'Good Production Source'}${isCompressedSource ? ', MP3/compressed' : ', uncompressed/standard'}${isMono ? ', mono' : ', stereo'}`;
+  const recommendation = isNotRecommended
+    ? 'Not Recommended for mastering until source issues are fixed.'
+    : isLowFidelitySource
+      ? 'Needs Work before mastering for best results.'
+      : 'Suitable source for mastering workflow.';
+  return { isLowFidelitySource, isCompressedSource, isMono, isNotRecommended, sourceType, channels, recommendation };
+}
+
 self.onmessage = (event: MessageEvent) => {
   const { type, payload, requestId } = event.data;
   console.log('[StudioSense] worker received analyze message', type, requestId);
@@ -277,13 +312,22 @@ self.onmessage = (event: MessageEvent) => {
       self.postMessage({ type: 'stage', stage: 'Quick scan', requestId });
       console.time('StudioSense worker analysis');
       const { result, debug } = analyzeQuick(channels, sampleRate, durationSec);
+      const sourceQuality = buildSourceQuality(result);
+      const profileFromResult = typeof result.balanceVerdict === 'string' && result.balanceVerdict.length
+        ? result.balanceVerdict.replace(/^Spectrum profile:\s*/i, '').replace(/\.\s*Confidence:.*$/i, '').trim()
+        : '';
+      const finalResult: AnalysisResult = {
+        ...result,
+        sourceQuality,
+        soundProfile: profileFromResult || result.soundProfile || 'Unspecified profile'
+      };
       console.timeEnd('StudioSense worker analysis');
       self.postMessage({ type: 'stage', stage: 'Building result', requestId });
       console.log('[StudioSense][debug]', debug);
-      const markers = buildProblemMarkers(result);
+      const markers = buildProblemMarkers(finalResult);
       console.log('StudioSense worker done', requestId);
       console.time('StudioSense worker done');
-      self.postMessage({ requestId, type: 'done', data: { result, markers, debug } });
+      self.postMessage({ requestId, type: 'done', data: { result: finalResult, markers, debug } });
       console.timeEnd('StudioSense worker done');
       return;
     }
