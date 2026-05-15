@@ -263,23 +263,38 @@ function buildSoundProfile(
   const selectedNotSure = isNotSureIntent(userIntent.description);
   const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
   const sourceType = sourceQuality?.sourceTypeGuess ?? '';
-  const monoOrNarrow = (result?.channels ?? 2) === 1 || /mono|narrow/i.test(sourceType);
-  const lowFidelitySource = sourceQuality?.rating === 'Low Fidelity Source' || /mp3\/compressed|compressed/i.test(sourceType) || monoOrNarrow;
+  const isCompressed = /mp3\/compressed|compressed/i.test(sourceType);
+  const isMono = (result?.channels ?? 2) === 1;
+  const monoOrNarrow = isMono || /mono|narrow/i.test(sourceType);
+  const context = result ? getSourceContext(result, '') : null;
+  const archivalSignalCount = context?.archivalSignalCount ?? 0;
+  const lowFidelitySource = sourceQuality?.rating === 'Low Fidelity Source';
+  const selectedIssue = userIntent.description || 'Not specified';
 
   if (lowFidelitySource || restorationIntent) {
-    if (restorationIntent) return selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source with possible low-end buildup' : 'Archival / restoration-style source; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
-    if (monoOrNarrow && sourceQuality?.rating === 'Low Fidelity Source') return selectedNotSure ? 'Possible old / low-fidelity mono recording with low-end buildup' : 'Old / low-fidelity mono recording; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
-    if (/mp3\/compressed|compressed/i.test(sourceType)) return selectedNotSure ? 'Studio Sense suspects a compressed low-fidelity source with possible low-end buildup' : 'Compressed low-fidelity source; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
-    return selectedNotSure ? 'Studio Sense suspects source-quality limits with possible low-end buildup' : 'Source-condition-first profile; primary issue is source quality, noise/artifacts, narrow image, and low-end buildup';
+    let finalProfile: string;
+    if (restorationIntent || archivalSignalCount >= 3) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source with possible low-end buildup' : 'Archival / restoration-style source';
+    } else if (monoOrNarrow) {
+      finalProfile = selectedNotSure ? 'Possible low-fidelity mono recording with low-end buildup' : 'Low-fidelity mono recording';
+    } else if (isCompressed) {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects source-quality limits in a compressed file' : 'Source-condition-first profile; compressed source with quality limits';
+    } else {
+      finalProfile = selectedNotSure ? 'Studio Sense suspects source-quality limits with possible low-end buildup' : 'Source-condition-first profile; primary issue is source quality';
+    }
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQuality: sourceQuality?.rating ?? '—', sourceType, isCompressed, isMono, archivalSignalCount, bassHeavy, tooQuiet, selectedIssue, finalSoundProfile: finalProfile });
+    return finalProfile;
   }
 
-  if (bassHeavy && tooQuiet) return selectedNotSure ? 'Possible low-end buildup in an unmastered mix' : 'Bass-heavy unmastered mix';
-  if (tooQuiet && darkTone) return selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
-  if (tooQuiet) return selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
-  if (darkTone && !releaseReady) return selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
-  if (releaseReady && !analysisState.majorProblem) return 'Streaming-ready balanced master';
-  if (bassHeavy) return selectedNotSure ? 'Possible low-end buildup' : 'Bass-heavy mix profile';
-  return selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
+  let finalProfile = selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
+  if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
+  else if (tooQuiet && darkTone) finalProfile = selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
+  else if (tooQuiet) finalProfile = selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
+  else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
+  else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
+  else if (bassHeavy) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
+  console.debug('[Studio Sense] Sound Profile Decision', { sourceQuality: sourceQuality?.rating ?? '—', sourceType, isCompressed, isMono, archivalSignalCount, bassHeavy, tooQuiet, selectedIssue, finalSoundProfile: finalProfile });
+  return finalProfile;
 }
 
 function buildWhyItSoundsThisWay(result: AnalysisResult | null, analysisState: CentralAnalysisState | null): string[] {
@@ -868,7 +883,13 @@ function assessSourceQuality(result: AnalysisResult | null, fileName: string): S
     };
   }
 
-  if (isCompressed && (mutedHighs || clippingCount > 0 || weakSignal || boomyLowEnd || extremeBalance)) {
+  const narrowStereo = /mono|narrow/i.test(sourceTypeGuess);
+  const severeRolloff = typeof result.highPercent === 'number' && result.highPercent < 10;
+  const noisyHighs = typeof result.highPercent === 'number' && result.highPercent > 45;
+  const unstablePeaks = clippingCount > 2;
+  const poorCompressedIndicators = [narrowStereo, severeRolloff, noisyHighs, unstablePeaks, weakSignal, context.archivalSignalCount >= 3, context.poorSpectralIndicators >= 2].filter(Boolean).length;
+
+  if (isCompressed && poorCompressedIndicators >= 2) {
     return {
       rating: 'Low Fidelity Source',
       confidence: 84,
