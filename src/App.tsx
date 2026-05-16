@@ -284,79 +284,58 @@ function buildSoundProfile(
   const selectedNotSure = isNotSureIntent(userIntent.description);
   const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
   const sourceType = sourceQuality?.sourceTypeGuess ?? '';
-  const isCompressed = /mp3\/compressed|compressed/i.test(sourceType);
-  const isMono = (result?.channels ?? 2) === 1;
-  const monoOrNarrow = isMono || /mono|narrow/i.test(sourceType);
+  const isMonoSource = (result?.channels ?? 2) === 1;
+  const isNarrowStereo = /narrow/i.test(sourceType) || ((result?.channels ?? 2) > 1 && (result?.stereoWidth ?? 1) < 0.18);
+  const isCompressedSource = /mp3\/compressed|compressed/i.test(sourceType);
+  const isMonoOrNarrowSource = isMonoSource || /mono/i.test(sourceType) || isNarrowStereo;
   const context = result ? getSourceContext(result, sourceType) : null;
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
   const sourceQualityLabel = sourceQuality?.rating ?? '';
   const isLowFidelitySource = sourceQualityLabel === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
-  const sourceRecommendationNotRecommended = sourceQuality?.masteringReadiness === 'Not Recommended';
-  const stereoWidth = context?.stereoWidth ?? (monoOrNarrow ? 'Narrow stereo' : 'Stereo');
+  const isGoodProductionSource = sourceQualityLabel === 'Good Production Source';
+  const stereoWidth = context?.stereoWidth ?? (isMonoOrNarrowSource ? 'Narrow stereo' : 'Stereo');
   const highFrequencyRolloff = context?.highFrequencyRolloff ?? false;
   const noisyHighs = context?.noisyHighs ?? false;
   const unstablePeaks = context?.unstablePeaks ?? false;
   const weakRms = context?.weakRms ?? false;
   const archivalIndicators = context?.archivalIndicators ?? false;
   const multiplePoorSpectralIndicators = (context?.poorSpectralIndicators ?? 0) >= 2;
-  const monoOrNarrowWithPoorIndicators = monoOrNarrow && (multiplePoorSpectralIndicators || weakRms || unstablePeaks || archivalSignalCount >= 2);
-  const compressedWithExtraProblems = isCompressed && (monoOrNarrow || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalIndicators || multiplePoorSpectralIndicators);
-  const hasGameOrVintageIndicators = /game|console|sega|nintendo|chiptune|8-bit|16-bit|retro|vintage/i.test(sourceType)
-    || (typeof result?.sampleRate === 'number' && result.sampleRate <= 24000 && multiplePoorSpectralIndicators);
-  const sourceAwareOverride = sourceRecommendationNotRecommended || monoOrNarrowWithPoorIndicators || archivalIndicators || (archivalSignalCount >= 3) || compressedWithExtraProblems;
+  const hasArchivalIndicators = archivalIndicators || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalSignalCount >= 3 || restorationIntent;
+  const hasSevereQualityProblems = multiplePoorSpectralIndicators || archivalSignalCount >= 3 || (weakRms && unstablePeaks);
+  const isProfessionalCompressedSource = isCompressedSource && !isMonoOrNarrowSource && !hasArchivalIndicators && !hasSevereQualityProblems;
 
-  if (isLowFidelitySource) {
-    let finalProfile: string;
-    if (monoOrNarrow && archivalIndicators) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
-      analysisState.primaryIssue = 'old or narrow low-fidelity recording';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', isMono ? 'Mono' : 'Narrow stereo']));
-    } else if (monoOrNarrow) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity narrow recording' : `${isMono ? 'Low-fidelity mono recording' : 'Low-fidelity narrow recording'}`;
-      analysisState.primaryIssue = 'limited stereo width / low-fidelity source';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', isMono ? 'Mono' : 'Narrow stereo']));
-    } else if (archivalIndicators || restorationIntent) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
-      analysisState.primaryIssue = 'source recording quality limits the final sound';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Dark', 'Tape-like']));
-    } else if (hasGameOrVintageIndicators) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity game / vintage source' : 'Low-fidelity game / vintage source';
-      analysisState.primaryIssue = 'limited-bandwidth vintage source';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Limited bandwidth']));
-    } else {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity source recording' : 'Low-fidelity source recording';
-      analysisState.primaryIssue = 'source quality limits the final sound';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity']));
-    }
-    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, hasGameOrVintageIndicators, finalSoundProfileTitle: finalProfile });
+  if (isLowFidelitySource && isMonoOrNarrowSource) {
+    const finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono source' : 'Low-fidelity mono recording';
+    analysisState.primaryIssue = 'mono low-fidelity source';
+    analysisState.confidence = 'High';
+    analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Mono', 'Vintage', 'Dark', 'Low fidelity']));
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMonoSource, isNarrowStereo, stereoWidth, finalSoundProfileTitle: finalProfile });
     return finalProfile;
   }
 
-  if (sourceAwareOverride || restorationIntent) {
-    let finalProfile: string;
-    if (monoOrNarrow && (sourceAwareOverride || restorationIntent)) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono/narrow source' : 'Low-fidelity mono recording';
-      analysisState.primaryIssue = 'limited source quality, mono/narrow image, and archival-style balance';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', isMono ? 'Mono' : 'Narrow stereo']));
-    } else if (compressedWithExtraProblems) {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects source-limited compressed audio' : 'Source-limited compressed recording';
-      analysisState.primaryIssue = 'compressed source quality is affecting clarity and loudness';
-      analysisState.confidence = analysisState.confidence === 'Low' ? 'Medium' : 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Compressed', 'Dark', 'Limited bandwidth']));
-    } else {
-      finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / restoration-style source' : 'Archival / restoration-style source';
-      analysisState.primaryIssue = 'source recording quality limits the final sound';
-      analysisState.confidence = 'High';
-      analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Low fidelity', 'Vintage', 'Dark', 'Tape-like']));
-    }
-    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
+  if (isLowFidelitySource && hasArchivalIndicators) {
+    const finalProfile = selectedNotSure ? 'Studio Sense suspects an archival / tape-style restoration source' : 'Archival / tape-style restoration source';
+    analysisState.primaryIssue = 'archival recording quality';
+    analysisState.confidence = 'High';
+    analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Vintage', 'Dark', 'Restoration source', stereoWidth]));
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMonoSource, isNarrowStereo, stereoWidth, hasArchivalIndicators, finalSoundProfileTitle: finalProfile });
     return finalProfile;
+  }
+
+  if (isCompressedSource && !isMonoOrNarrowSource && !hasArchivalIndicators) {
+    const lowEndHeavy = bassHeavy || ((result?.lowPercent ?? 0) >= 58);
+    const finalProfile = selectedNotSure
+      ? (lowEndHeavy ? 'Studio Sense suspects compressed audio with low-end buildup' : 'Studio Sense suspects a streaming / compressed source')
+      : (lowEndHeavy ? 'Compressed source with low-end buildup' : 'Streaming / compressed audio source');
+    analysisState.primaryIssue = lowEndHeavy ? 'streaming-source tonal balance' : 'compression / source format';
+    analysisState.confidence = 'Medium';
+    analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Compressed', darkTone ? 'Vintage' : 'Modern', stereoWidth]));
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMonoSource, isNarrowStereo, stereoWidth, isProfessionalCompressedSource, finalSoundProfileTitle: finalProfile });
+    return finalProfile;
+  }
+
+  if (isGoodProductionSource) {
+    // fall through to normal mix-title logic for clean WAV/studio-oriented sources
   }
 
   let finalProfile = selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
@@ -366,7 +345,7 @@ function buildSoundProfile(
   else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
   else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
   else if (bassHeavy) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
-  console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMono, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
+  console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, isMonoSource, isNarrowStereo, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
   return finalProfile;
 }
 
