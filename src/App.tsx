@@ -293,17 +293,23 @@ function getSourceContext(result: AnalysisResult, fileName: string): SourceConte
 
 function getSoundProfileDebugFlags(result: AnalysisResult | null, fileName: string): SoundProfileDebugFlags {
   const context = result ? getSourceContext(result, fileName) : null;
+  const resultRecord = (result ?? {}) as Record<string, unknown>;
+  const visibleSourceQuality = resultRecord.sourceQuality ?? resultRecord.sourceQualityLabel ?? (result?.sourceQuality?.isLowFidelitySource ? 'Low Fidelity Source' : '');
+  const visibleMasteringReadiness = resultRecord.masteringReadiness ?? (result?.sourceQuality?.isNotRecommended ? 'Not Recommended' : '');
+  const visibleSourceTypeGuess = resultRecord.sourceTypeGuess ?? result?.sourceQuality?.sourceType ?? '';
   const isVisibleLowFidelity =
-    String(result?.sourceQuality?.isLowFidelitySource ? 'Low Fidelity Source' : "").toLowerCase().includes("low fidelity") ||
-    String(context?.sourceQuality ?? "").toLowerCase().includes("low fidelity");
+    String(visibleSourceQuality).toLowerCase().includes('low fidelity') ||
+    String(context?.sourceQuality ?? '').toLowerCase().includes('low fidelity');
+
   const isVisibleNotRecommended =
-    String(result?.sourceQuality?.isNotRecommended ? 'Not Recommended' : "").toLowerCase().includes("not recommended") ||
-    String(context?.masteringReadiness ?? "").toLowerCase().includes("not recommended");
+    String(visibleMasteringReadiness).toLowerCase().includes('not recommended') ||
+    String(context?.masteringReadiness ?? '').toLowerCase().includes('not recommended');
+
   const isMonoOrNarrow =
     context?.isMono === true ||
     context?.isNarrowStereo === true ||
-    String(result?.sourceQuality?.sourceType ?? "").toLowerCase().includes("mono") ||
-    String(result?.sourceQuality?.sourceType ?? "").toLowerCase().includes("narrow");
+    String(visibleSourceTypeGuess).toLowerCase().includes('mono') ||
+    String(visibleSourceTypeGuess).toLowerCase().includes('narrow');
   const isOldTapeLike =
     isVisibleLowFidelity &&
     isVisibleNotRecommended &&
