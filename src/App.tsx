@@ -1770,7 +1770,8 @@ export default function App() {
       {largeFileWarning ? <p className="status">{largeFileWarning}</p> : null}
       <p className="status tiny-note">Quick browser estimate — use a DAW meter for final mastering decisions.</p>
       {audioUrl ? <div className="workflow-row"><button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button></div> : null}
-  {isBeginnerMode ? <section className="guidance"><h2>Your Goal vs What Studio Sense Found</h2><p><strong>User goal:</strong> {userIntent.genre} → {userIntent.outcome}</p><p><strong>User issue:</strong> {userIntent.description.trim() || 'No issue described yet.'}</p><p><strong>Audio finding:</strong> {goalVsFound.audioFinding}</p><p><strong>Match result:</strong> {goalVsFound.matchResult}</p></section> : null}
+    </section>
+    {isBeginnerMode ? <section className="guidance"><h2>Your Goal vs What Studio Sense Found</h2><p><strong>User goal:</strong> {userIntent.genre} → {userIntent.outcome}</p><p><strong>User issue:</strong> {userIntent.description.trim() || 'No issue described yet.'}</p><p><strong>Audio finding:</strong> {goalVsFound.audioFinding}</p><p><strong>Match result:</strong> {goalVsFound.matchResult}</p></section> : null}
       {audioUrl ? <AudioPlayer
         audioUrl={audioUrl}
         startSec={startSec}
@@ -1785,7 +1786,6 @@ export default function App() {
       <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p></section>
       <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
       <section className="guidance"><h2>🛠 How to fix it</h2>{isFinalAnalysisReady ? (fixSuggestions.length ? <ul>{fixSuggestions.map((fix) => <li key={fix}>{fix}</li>)}</ul> : <p>Looks healthy. Use minor polish and final reference checks.</p>) : <p>Run analysis first to generate a beginner-friendly fix plan.</p>}</section>
-    </section>
   </>
   ) : (
   <>
