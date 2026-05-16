@@ -277,15 +277,17 @@ function buildSoundProfile(
   analysisState: CentralAnalysisState | null,
   sourceQuality: SourceQualityAssessment | null,
   userIntent: UserIntent,
-  result: AnalysisResult | null
+  result: AnalysisResult | null,
+  displayedAudioType: string
 ): string {
   if (!analysisState) return 'Analyzing sound profile…';
   const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
   const selectedNotSure = isNotSureIntent(userIntent.description);
   const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
   const sourceType = sourceQuality?.sourceTypeGuess ?? '';
+  const audioTypeLabel = displayedAudioType ?? '';
   const isMonoSource = (result?.channels ?? 2) === 1;
-  const isNarrowStereo = /narrow/i.test(sourceType) || ((result?.channels ?? 2) > 1 && (result?.stereoWidth ?? 1) < 0.18);
+  const isNarrowStereo = /narrow/i.test(sourceType) || ((result?.channels ?? 2) > 1 && (result?.midPercent ?? 0) > 72);
   const isCompressedSource = /mp3\/compressed|compressed/i.test(sourceType);
   const isMonoOrNarrowSource = isMonoSource || /mono/i.test(sourceType) || isNarrowStereo;
   const context = result ? getSourceContext(result, sourceType) : null;
@@ -303,6 +305,25 @@ function buildSoundProfile(
   const hasArchivalIndicators = archivalIndicators || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalSignalCount >= 3 || restorationIntent;
   const hasSevereQualityProblems = multiplePoorSpectralIndicators || archivalSignalCount >= 3 || (weakRms && unstablePeaks);
   const isProfessionalCompressedSource = isCompressedSource && !isMonoOrNarrowSource && !hasArchivalIndicators && !hasSevereQualityProblems;
+
+  // Hard overrides must run before any tonal/loudness logic.
+  if (/mono/i.test(sourceType) && /low fidelity source/i.test(sourceQualityLabel)) {
+    analysisState.primaryIssue = 'mono low-fidelity source';
+    analysisState.confidence = 'High';
+    analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Mono', 'Vintage', 'Dark', 'Low fidelity']));
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, audioTypeLabel, finalSoundProfileTitle: 'Low-fidelity mono recording' });
+    return 'Low-fidelity mono recording';
+  }
+
+  if (/mp3\/compressed/i.test(sourceType) && /streaming\s*\/\s*compressed audio/i.test(audioTypeLabel) && /stereo/i.test(sourceType) && !/mono/i.test(sourceType)) {
+    const lowEndHeavy = bassHeavy || ((result?.lowPercent ?? 0) >= 58);
+    const finalProfile = lowEndHeavy ? 'Compressed source with low-end buildup' : 'Streaming / compressed audio source';
+    analysisState.primaryIssue = lowEndHeavy ? 'streaming-source tonal balance' : 'compression / source format';
+    analysisState.confidence = 'Medium';
+    analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Compressed', stereoWidth]));
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel, sourceType, audioTypeLabel, stereoWidth, lowEndHeavy, finalSoundProfileTitle: finalProfile });
+    return finalProfile;
+  }
 
   if (isLowFidelitySource && isMonoOrNarrowSource) {
     const finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono source' : 'Low-fidelity mono recording';
@@ -1466,12 +1487,12 @@ export default function App() {
   const isFinalAnalysisReady = analysisStatus === 'complete' && Boolean(result) && Boolean(analysisState);
   const hasUploadedFile = Boolean(audioDataRef.current);
   const awaitingAnalysis = hasUploadedFile && !analysisStarted;
+  const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
   const soundProfile = isFinalAnalysisReady
-    ? buildSoundProfile(analysisState, sourceQuality, userIntent, result) || result?.soundProfile || 'Waiting for analysis'
+    ? buildSoundProfile(analysisState, sourceQuality, userIntent, result, audioType) || result?.soundProfile || 'Waiting for analysis'
     : awaitingAnalysis ? '—' : (result?.soundProfile || 'Waiting for analysis');
   const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : awaitingAnalysis ? ['Run analysis to explain the current sound character.'] : ['Run analysis to explain this recording.'];
   const fixSuggestions = isFinalAnalysisReady ? buildFixSuggestions(result) : [];
-  const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
   const sourceConfidence = isFinalAnalysisReady ? detectSourceConfidence(result, fileName) : 'Waiting for analysis';
   const profileData = isFinalAnalysisReady ? {
     soundProfile,
