@@ -302,12 +302,17 @@ function buildSoundProfile(
     return 'Low-fidelity mono recording';
   }
 
-  const context = result ? getSourceContext(result, fileName) : null;
+  const context = result ? getSourceContext(result, "") : null;
+  console.log("BUILD SOUND PROFILE DEBUG", {
+    hasResult: Boolean(result),
+    context,
+    isMono: context?.isMono,
+    isCompressed: context?.isCompressed,
+    archivalSignalCount: context?.archivalSignalCount,
+  });
+
   if (context?.isMono) {
-    analysisState.primaryIssue = 'mono low-fidelity source';
-    analysisState.confidence = 'High';
-    analysisState.mixCharacter = ['Mono', 'Vintage', 'Dark', 'Low fidelity'];
-    return 'Low-fidelity mono recording';
+    return "LOW FIDELITY MONO TEST ACTIVE";
   }
 
   const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
