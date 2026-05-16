@@ -289,13 +289,12 @@ function buildSoundProfile(
     sourceTypeGuess,
     sourceType: sourceQuality?.sourceTypeGuess,
   });
-  const sourceQualityText = String(sourceQualityLabel ?? sourceQuality ?? "").toLowerCase();
-  const sourceTypeText = String(sourceTypeGuess ?? sourceQuality?.sourceTypeGuess ?? "").toLowerCase();
+  const finalSourceQualityLabel = sourceQuality?.rating ?? sourceQualityLabel ?? '';
+  const finalSourceTypeGuess = sourceQuality?.sourceTypeGuess ?? sourceTypeGuess ?? '';
+  const sourceQualityText = String(finalSourceQualityLabel).toLowerCase();
+  const sourceTypeText = String(finalSourceTypeGuess).toLowerCase();
 
-  if (
-    sourceQualityText.includes("low fidelity") &&
-    sourceTypeText.includes("mono")
-  ) {
+  if ((/low[ -]?fidelity source/i.test(finalSourceQualityLabel) || /low[ -]?fidelity/i.test(sourceQualityText)) && sourceTypeText.includes("mono")) {
     analysisState.primaryIssue = 'mono low-fidelity source';
     analysisState.confidence = 'High';
     analysisState.mixCharacter = ['Mono', 'Vintage', 'Dark', 'Low fidelity'];
@@ -305,7 +304,7 @@ function buildSoundProfile(
   const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
   const selectedNotSure = isNotSureIntent(userIntent.description);
   const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
-  const sourceType = sourceTypeGuess ?? sourceQuality?.sourceTypeGuess ?? '';
+  const sourceType = finalSourceTypeGuess;
   const audioTypeLabel = displayedAudioType ?? '';
   const isMonoSource = (result?.channels ?? 2) === 1;
   const isNarrowStereo = /narrow/i.test(sourceType) || ((result?.channels ?? 2) > 1 && (result?.midPercent ?? 0) > 72);
@@ -313,7 +312,7 @@ function buildSoundProfile(
   const isMonoOrNarrowSource = isMonoSource || /mono/i.test(sourceType) || isNarrowStereo;
   const context = result ? getSourceContext(result, sourceType) : null;
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
-  const sourceQualityRating = sourceQualityLabel ?? sourceQuality?.rating ?? '';
+  const sourceQualityRating = finalSourceQualityLabel;
   const isLowFidelitySource = sourceQualityRating === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
   const isGoodProductionSource = sourceQualityRating === 'Good Production Source';
   const stereoWidth = context?.stereoWidth ?? (isMonoOrNarrowSource ? 'Narrow stereo' : 'Stereo');
@@ -1509,6 +1508,12 @@ export default function App() {
   const hasUploadedFile = Boolean(audioDataRef.current);
   const awaitingAnalysis = hasUploadedFile && !analysisStarted;
   const audioType = isFinalAnalysisReady ? detectAudioType(result, fileName, analysisState) : awaitingAnalysis ? '—' : 'Waiting for analysis';
+  const soundProfileDebugData = {
+    sourceQuality: sourceQuality?.rating ?? '—',
+    sourceTypeGuess: sourceQuality?.sourceTypeGuess ?? '—',
+    audioType,
+    channels: typeof result?.channels === 'number' ? String(result.channels) : '—'
+  };
   const soundProfile = isFinalAnalysisReady
     ? buildSoundProfile(
       analysisState,
@@ -1686,7 +1691,7 @@ export default function App() {
     onDurationChange={setDuration}
   />}
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p></> : null}</section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p><p><strong>DEBUG Sound Profile Source:</strong><br />sourceQuality = {soundProfileDebugData.sourceQuality}<br />sourceTypeGuess = {soundProfileDebugData.sourceTypeGuess}<br />audioType = {soundProfileDebugData.audioType}<br />channels = {soundProfileDebugData.channels}</p></> : null}</section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
