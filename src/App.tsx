@@ -1525,6 +1525,39 @@ export default function App() {
       audioType
     ) || result?.soundProfile || 'Waiting for analysis'
     : awaitingAnalysis ? '—' : (result?.soundProfile || 'Waiting for analysis');
+  const visibleSourceQualityText = String(
+    sourceQuality?.label ??
+    sourceQuality?.rating ??
+    (analysisState as any)?.sourceQuality?.label ??
+    (analysisState as any)?.sourceQuality ??
+    ''
+  ).toLowerCase();
+
+  const visibleSourceTypeText = String(
+    sourceTypeGuess ??
+    (analysisState as any)?.sourceTypeGuess ??
+    (analysisState as any)?.sourceQuality?.sourceTypeGuess ??
+    (analysisState as any)?.audioType?.sourceTypeGuess ??
+    ''
+  ).toLowerCase();
+
+  const forceLowFidelityMonoProfile =
+    visibleSourceQualityText.includes('low fidelity') &&
+    visibleSourceTypeText.includes('mono');
+
+  const finalSoundProfile = forceLowFidelityMonoProfile
+    ? {
+      title: 'Low-fidelity mono recording',
+      confidence: 'High',
+      primaryIssue: 'mono low-fidelity source',
+      mixCharacter: ['Mono', 'Vintage', 'Dark', 'Low fidelity'],
+    }
+    : {
+      title: soundProfile,
+      confidence: analysisState?.confidence,
+      primaryIssue: analysisState?.primaryIssue,
+      mixCharacter: analysisState?.mixCharacter ?? [],
+    };
   const whyItSoundsThisWay = isFinalAnalysisReady ? buildWhyItSoundsThisWay(result, analysisState) : awaitingAnalysis ? ['Run analysis to explain the current sound character.'] : ['Run analysis to explain this recording.'];
   const fixSuggestions = isFinalAnalysisReady ? buildFixSuggestions(result) : [];
   const sourceConfidence = isFinalAnalysisReady ? detectSourceConfidence(result, fileName) : 'Waiting for analysis';
@@ -1691,7 +1724,7 @@ export default function App() {
     onDurationChange={setDuration}
   />}
 
-  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{soundProfile}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {analysisState.confidence}</p><p><strong>Primary issue:</strong> {analysisState.primaryIssue}</p><p><strong>Mix Character:</strong> {analysisState.mixCharacter.length ? analysisState.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p><p><strong>DEBUG Sound Profile Source:</strong><br />sourceQuality = {soundProfileDebugData.sourceQuality}<br />sourceTypeGuess = {soundProfileDebugData.sourceTypeGuess}<br />audioType = {soundProfileDebugData.audioType}<br />channels = {soundProfileDebugData.channels}</p></> : null}</section>
+  <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{finalSoundProfile.title}</p>{isFinalAnalysisReady && analysisState ? <><p><strong>Confidence:</strong> {finalSoundProfile.confidence}</p><p><strong>Primary issue:</strong> {finalSoundProfile.primaryIssue}</p><p><strong>Mix Character:</strong> {finalSoundProfile.mixCharacter.length ? finalSoundProfile.mixCharacter.join(' • ') : 'Not enough mix-character data yet'}</p><p><strong>DEBUG:</strong><br />sourceQuality = {visibleSourceQualityText || 'missing'}<br />sourceTypeGuess = {visibleSourceTypeText || 'missing'}<br />forceLowFidelityMonoProfile = {String(forceLowFidelityMonoProfile)}</p></> : null}</section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
   <section className="guidance"><h2>🧠 Why it sounds like this</h2><ul>{whyItSoundsThisWay.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
