@@ -1862,11 +1862,81 @@ export default function App() {
 
   <section className="guidance"><h2>Fix Your Track — Step by Step</h2>{result ? <><p className="empty">Your Listening Coach recommends this order so each move helps the next one.</p><ol><li>{((result.clippingCount ?? 0) > 0 || (typeof result.peakDb === 'number' && result.peakDb >= -1)) ? 'Fix clipping and peak safety first before chasing loudness.' : 'Peaks are already safe, so start with loudness and tone refinement.'}</li><li>Then adjust loudness in small moves so it feels competitive without sounding crushed.</li><li>Then rebalance low-end or high-end only if the tone still feels off.</li><li>Then re-check against a reference track and confirm it translates well.</li></ol></> : <p className="empty">Run analysis to get your Listening Coach step-by-step repair order.</p>}</section>
 
-  {analysisStarted ? <section className="guidance"><h2>Auto Fix Plan</h2>{autoFixPlan ? <><h3>1) What is wrong</h3><ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul><h3>2) Why it matters</h3><ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>3) What to try first</h3><ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>4) What to listen for</h3><ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul><h3>5) What NOT to do</h3><ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>6) Source quality</h3><ul>{autoFixPlan.sourceQuality.map((item) => <li key={`source-${item}`}>{item}</li>)}</ul><h3>7) Release Readiness</h3><ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul><h3>🎧 Listening Coach Tip</h3><p>Fix the loudest peaks first.</p><p>Then bring the overall volume up slowly.</p><p>Only adjust tone after that if something still feels off.</p><p>Make small changes and listen each time.</p><p>You don’t need to get it perfect.</p><p>If it sounds better than before, you’re improving.</p></> : <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>}</section> : null}
+  {analysisStarted ? (
+    <section className="guidance">
+      <h2>Auto Fix Plan</h2>
+      {autoFixPlan ? (
+        <>
+          <h3>1) What is wrong</h3>
+          <ul>{autoFixPlan.wrong.map((item) => <li key={`wrong-${item}`}>{item}</li>)}</ul>
+          <h3>2) Why it matters</h3>
+          <ul>{autoFixPlan.matters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul>
+          <h3>3) What to try first</h3>
+          <ol>{autoFixPlan.first.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol>
+          <h3>4) What to listen for</h3>
+          <ul>{autoFixPlan.listenFor.map((item) => <li key={`listen-${item}`}>{item}</li>)}</ul>
+          <h3>5) What NOT to do</h3>
+          <ul>{autoFixPlan.avoid.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul>
+          <h3>6) Source quality</h3>
+          <ul>{autoFixPlan.sourceQuality.map((item) => <li key={`source-${item}`}>{item}</li>)}</ul>
+          <h3>7) Release Readiness</h3>
+          <ul>{autoFixPlan.readiness.map((item) => <li key={`ready-${item}`}>{item}</li>)}</ul>
+          <h3>🎧 Listening Coach Tip</h3>
+          <p>Fix the loudest peaks first.</p>
+          <p>Then bring the overall volume up slowly.</p>
+          <p>Only adjust tone after that if something still feels off.</p>
+          <p>Make small changes and listen each time.</p>
+          <p>You don’t need to get it perfect.</p>
+          <p>If it sounds better than before, you’re improving.</p>
+        </>
+      ) : (
+        <p className="empty">Run analysis to generate a beginner-friendly repair plan.</p>
+      )}
+    </section>
+  ) : null}
 
   {isCreatorMode ? <section className="guidance"><h2>Target guidance</h2><p>Target LUFS: {TARGET_LUFS}. Safe peak target: below {SAFE_PEAK_DBFS} dBFS.</p><p>Browser-based estimate (including LUFS estimate), not a replacement for studio metering.</p></section> : null}
 
-  <section className="guidance"><h2>Listening Coach Plan</h2><div className="workflow"><button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>Build Listening Coach Plan</button></div>{safeModeFixPlan ? <><h3>🎧 Quick Coach Summary</h3>{safeModeFixPlan.quickSummary.length ? <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul> : <p>• No major red flags detected.</p>}<p><strong>{safeModeFixPlan.startWith}</strong></p><h3>Issue Priority</h3><ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul><h3>🎧 WHAT I HEAR</h3><ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul><h3>⚠️ WHAT MATTERS</h3><ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul><h3>🛠️ WHAT TO DO FIRST</h3><ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol><h3>🎧 WHAT TO LISTEN FOR</h3><ul><li>Does it feel as loud as other songs?</li><li>Does the bass feel full but not heavy?</li><li>Do vocals/instruments stay clear?</li><li>Do loud parts stay clean without crunch or distortion?</li></ul><h3>🚫 WHAT NOT TO DO</h3><ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul><h3>🎯 COACH NOTE</h3><p>{safeModeFixPlan.coachNote}</p></> : <p className="empty">Run analysis, then tap “Build Listening Coach Plan” for a structured listening coach plan.</p>}</section>
+  <section className="guidance">
+    <h2>Listening Coach Plan</h2>
+    <div className="workflow">
+      <button className="upload-btn" type="button" onClick={runSafeModeAutoFix} disabled={!result}>
+        Build Listening Coach Plan
+      </button>
+    </div>
+    {safeModeFixPlan ? (
+      <>
+        <h3>🎧 Quick Coach Summary</h3>
+        {safeModeFixPlan.quickSummary.length ? (
+          <ul>{safeModeFixPlan.quickSummary.map((item) => <li key={`quick-${item}`}>{item}</li>)}</ul>
+        ) : (
+          <p>• No major red flags detected.</p>
+        )}
+        <p><strong>{safeModeFixPlan.startWith}</strong></p>
+        <h3>Issue Priority</h3>
+        <ul>{safeModeFixPlan.issueSeverity.map((item) => <li key={`severity-${item.label}`}><span className={`pill ${item.severity === 'critical' ? 'bad' : item.severity === 'important' ? 'warn' : 'good'}`}>{item.severity === 'critical' ? '🔴 Critical' : item.severity === 'important' ? '🟠 Important' : '🟢 Optional'}</span> <span>{item.label}</span></li>)}</ul>
+        <h3>🎧 WHAT I HEAR</h3>
+        <ul>{safeModeFixPlan.whatIHear.map((item) => <li key={`hear-${item}`}>{item}</li>)}</ul>
+        <h3>⚠️ WHAT MATTERS</h3>
+        <ul>{safeModeFixPlan.whatMatters.map((item) => <li key={`matters-${item}`}>{item}</li>)}</ul>
+        <h3>🛠️ WHAT TO DO FIRST</h3>
+        <ol>{safeModeFixPlan.whatToDoFirst.map((item) => <li key={`first-${item}`}>{item}</li>)}</ol>
+        <h3>🎧 WHAT TO LISTEN FOR</h3>
+        <ul>
+          <li>Does it feel as loud as other songs?</li>
+          <li>Does the bass feel full but not heavy?</li>
+          <li>Do vocals/instruments stay clear?</li>
+          <li>Do loud parts stay clean without crunch or distortion?</li>
+        </ul>
+        <h3>🚫 WHAT NOT TO DO</h3>
+        <ul>{safeModeFixPlan.whatNotToDo.map((item) => <li key={`avoid-${item}`}>{item}</li>)}</ul>
+        <h3>🎯 COACH NOTE</h3>
+        <p>{safeModeFixPlan.coachNote}</p>
+      </>
+    ) : (
+      <p className="empty">Run analysis, then tap “Build Listening Coach Plan” for a structured listening coach plan.</p>
+    )}
+  </section>
   </>
   )}
       </section>
