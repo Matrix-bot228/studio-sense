@@ -280,7 +280,8 @@ function buildSoundProfile(
   sourceTypeGuess: string,
   userIntent: UserIntent,
   result: AnalysisResult | null,
-  displayedAudioType: string
+  displayedAudioType: string,
+  fileName = ''
 ): string {
   if (!analysisState) return 'Analyzing sound profile…';
   console.log("SoundProfile source debug", {
@@ -301,6 +302,14 @@ function buildSoundProfile(
     return 'Low-fidelity mono recording';
   }
 
+  const context = result ? getSourceContext(result, fileName) : null;
+  if (context?.isMono) {
+    analysisState.primaryIssue = 'mono low-fidelity source';
+    analysisState.confidence = 'High';
+    analysisState.mixCharacter = ['Mono', 'Vintage', 'Dark', 'Low fidelity'];
+    return 'Low-fidelity mono recording';
+  }
+
   const { bassHeavy, tooQuiet, darkTone, releaseReady } = analysisState;
   const selectedNotSure = isNotSureIntent(userIntent.description);
   const restorationIntent = userIntent.genre === 'Archival / Restoration' || /(archiv|restor|old recording|transfer|cassette|tape)/i.test(userIntent.description);
@@ -310,10 +319,12 @@ function buildSoundProfile(
   const isNarrowStereo = /narrow/i.test(sourceType) || ((result?.channels ?? 2) > 1 && (result?.midPercent ?? 0) > 72);
   const isCompressedSource = /mp3\/compressed|compressed/i.test(sourceType);
   const isMonoOrNarrowSource = isMonoSource || /mono/i.test(sourceType) || isNarrowStereo;
-  const context = result ? getSourceContext(result, sourceType) : null;
   const archivalSignalCount = context?.archivalSignalCount ?? 0;
   const sourceQualityRating = finalSourceQualityLabel;
-  const isLowFidelitySource = sourceQualityRating === 'Low Fidelity Source' || /low fidelity source/i.test(sourceType);
+  const isLowFidelitySource =
+    Boolean(context?.isMono) ||
+    (context?.archivalSignalCount ?? 0) >= 2 ||
+    Boolean(context?.isCompressed);
   const isGoodProductionSource = sourceQualityRating === 'Good Production Source';
   const stereoWidth = context?.stereoWidth ?? (isMonoOrNarrowSource ? 'Narrow stereo' : 'Stereo');
   const highFrequencyRolloff = context?.highFrequencyRolloff ?? false;
@@ -1522,7 +1533,8 @@ export default function App() {
       sourceQuality?.sourceTypeGuess ?? '',
       userIntent,
       result,
-      audioType
+      audioType,
+      fileName
     ) || result?.soundProfile || 'Waiting for analysis'
     : awaitingAnalysis ? '—' : (result?.soundProfile || 'Waiting for analysis');
   const visibleSourceQualityText = String(
