@@ -1769,14 +1769,15 @@ export default function App() {
     primaryIssue: finalPrimaryIssue,
     mixCharacter: finalMixCharacter,
   };
-  const sourceQualityDebugText = JSON.stringify(sourceQuality ?? {}).toLowerCase();
+  const sourceQualityText = String(sourceQuality?.rating ?? '').toLowerCase();
+  const sourceTypeGuessText = String(sourceQuality?.sourceTypeGuess ?? '').toLowerCase();
 
   const displaySoundProfileTitle =
-    sourceQualityDebugText.includes('low fidelity') && sourceQualityDebugText.includes('mono')
+    sourceQualityText.includes('low fidelity') && sourceTypeGuessText.includes('mono')
       ? 'Low-fidelity mono recording'
-      : sourceQualityDebugText.includes('low fidelity') && sourceQualityDebugText.includes('mp3')
+      : sourceQualityText.includes('low fidelity') && sourceTypeGuessText.includes('mp3/compressed')
         ? 'Compressed source with low-end buildup'
-        : sourceQualityDebugText.includes('low fidelity')
+        : sourceQualityText.includes('low fidelity')
           ? 'Low-fidelity / restoration-style source'
           : soundProfile;
   const soundProfileDebugLine = {
