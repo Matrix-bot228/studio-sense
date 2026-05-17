@@ -1715,19 +1715,11 @@ export default function App() {
     ) || result?.soundProfile || 'Waiting for analysis'
     : awaitingAnalysis ? '—' : (result?.soundProfile || 'Waiting for analysis');
   const soundProfileDebugFlags = getSoundProfileDebugFlags(result, fileName);
-  const visibleSourceQualityText = String(
-    sourceQuality?.rating ??
-    (sourceQuality as any)?.label ??
-    result?.sourceQuality ??
-    (result as any)?.sourceQualityLabel ??
-    ""
-  ).toLowerCase();
+  const displayedSourceQuality = sourceQuality?.rating ?? '—';
+  const displayedSourceTypeGuess = sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.';
 
-  const visibleSourceTypeText = String(
-    (result as any)?.sourceTypeGuess ??
-    sourceQuality?.sourceTypeGuess ??
-    ""
-  ).toLowerCase();
+  const visibleSourceQualityText = String(displayedSourceQuality).toLowerCase();
+  const visibleSourceTypeText = String(displayedSourceTypeGuess).toLowerCase();
 
 
   const profileSourceText = [
@@ -1756,12 +1748,16 @@ export default function App() {
       : 'Mono vocal / acappella source';
     finalPrimaryIssue = 'vocal cleanup before mastering';
     finalMixCharacter = 'Vocal-focused • Mono • Vintage • Dark • Soft • Low fidelity';
-  } else if (isMonoSource && isLowFidelitySource) {
-    finalSoundProfileTitle = 'Low-fidelity mono source';
+  } else if (isLowFidelitySource && visibleSourceTypeText.includes('mono')) {
+    finalSoundProfileTitle = 'Low-fidelity mono recording';
     finalPrimaryIssue = 'source cleanup before mastering';
     finalMixCharacter = 'Mono • Vintage • Dark • Soft • Low fidelity';
+  } else if (isLowFidelitySource && visibleSourceTypeText.includes('mp3/compressed')) {
+    finalSoundProfileTitle = 'Compressed source with low-end buildup';
+    finalPrimaryIssue = 'source cleanup before mastering';
+    finalMixCharacter = 'Vintage • Dark • Compressed • Low fidelity';
   } else if (isLowFidelitySource) {
-    finalSoundProfileTitle = 'Low-fidelity source recording';
+    finalSoundProfileTitle = 'Low-fidelity / restoration-style source';
     finalPrimaryIssue = 'source cleanup before mastering';
     finalMixCharacter = 'Vintage • Dark • Compressed • Low fidelity';
   }
