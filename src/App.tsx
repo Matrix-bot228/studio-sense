@@ -347,6 +347,35 @@ function buildSoundProfile(
   };
   const context = result ? getSourceContext(result, fileName) : null;
   const { isVisibleLowFidelity, isMonoOrNarrow, isOldTapeLike } = getSoundProfileDebugFlags(result, fileName);
+  const finalSourceQualityLabel = sourceQuality?.rating ?? sourceQualityLabel ?? '';
+  const finalSourceTypeGuess = sourceQuality?.sourceTypeGuess ?? sourceTypeGuess ?? '';
+  const sourceQualityText = String(finalSourceQualityLabel).toLowerCase();
+  const sourceTypeText = String(finalSourceTypeGuess).toLowerCase();
+  const sourceQualityRecommendation = String((result as any)?.sourceQuality?.recommendation ?? '').toLowerCase();
+  const hasLowFidelitySourceProblem =
+    /low[ -]?fidelity source/i.test(finalSourceQualityLabel) ||
+    /low[ -]?fidelity/i.test(sourceQualityText) ||
+    sourceQualityRecommendation.includes('not recommended') ||
+    String(sourceQuality?.masteringReadiness ?? '').toLowerCase().includes('not recommended');
+
+  const fileNameLower = String(fileName ?? '').toLowerCase();
+  const userIntentText = `${userIntent?.description ?? ''}`.toLowerCase();
+  const vocalKeywordRegex = /(acappella|a cappella|vocal|voice|vox|stem|spoken|speech)/i;
+  const hasVocalNamingSignal = vocalKeywordRegex.test(fileNameLower) || vocalKeywordRegex.test(userIntentText);
+  const lowBassEnergy = result?.lowPercent ?? 0;
+  const vocalMidEnergy = result?.midPercent ?? 0;
+  const highBandEnergy = result?.highPercent ?? 0;
+  const channelMode = context?.stereoWidth ?? ((result?.channels ?? 2) === 1 ? 'Mono' : 'Stereo');
+  const isMonoSourceForDebug = (result?.channels ?? 2) === 1;
+  const isMonoOrNarrowSourceForVocal = isMonoSourceForDebug || context?.stereoWidth === 'Narrow stereo' || isMonoOrNarrow;
+  const noStrongFullBandIndicators = highBandEnergy < 20 && lowBassEnergy < 38;
+  const lowBassVsVocal = lowBassEnergy + 8 < vocalMidEnergy;
+  const hasVoiceDominantBalance = vocalMidEnergy >= 45 && lowBassVsVocal;
+  const isVocalOrAcappella = Boolean(
+    hasVocalNamingSignal &&
+    isMonoOrNarrowSourceForVocal &&
+    (hasVoiceDominantBalance || noStrongFullBandIndicators || context?.isVocalStem)
+  );
 
   if (isVisibleLowFidelity && isMonoOrNarrow) {
     analysisState.primaryIssue = 'mono low-fidelity source';
@@ -362,22 +391,34 @@ function buildSoundProfile(
     return 'Archival / tape-style restoration source';
   }
 
+  if (isVocalOrAcappella) {
+    const isLowFidelityVocal = hasLowFidelitySourceProblem || isVisibleLowFidelity;
+    const finalProfileTitle = isLowFidelityVocal ? 'Low-fidelity mono vocal recording' : 'Mono vocal / acappella source';
+    analysisState.primaryIssue = isLowFidelityVocal ? 'vocal cleanup before mastering' : 'vocal source quality / cleanup needed';
+    analysisState.confidence = 'High';
+    analysisState.mixCharacter = isLowFidelityVocal
+      ? ['Vocal-focused', 'Mono', 'Vintage', 'Dark', 'Soft', 'Low fidelity']
+      : ['Vocal-focused', 'Mono', 'Warm', 'Dark', 'Vintage', 'Low fidelity'];
+    console.log("SoundProfile debug", {
+      fileName,
+      sourceQuality: finalSourceQualityLabel,
+      sourceTypeGuess: finalSourceTypeGuess,
+      channelMode,
+      isMono: isMonoSourceForDebug,
+      isVocalOrAcappella,
+      lowBassEnergy,
+      vocalMidEnergy,
+      finalProfileTitle
+    });
+    return finalProfileTitle;
+  }
+
   console.log("SoundProfile source debug", {
     sourceQualityLabel,
     sourceQuality,
     sourceTypeGuess,
     sourceType: sourceQuality?.sourceTypeGuess,
   });
-  const finalSourceQualityLabel = sourceQuality?.rating ?? sourceQualityLabel ?? '';
-  const finalSourceTypeGuess = sourceQuality?.sourceTypeGuess ?? sourceTypeGuess ?? '';
-  const sourceQualityText = String(finalSourceQualityLabel).toLowerCase();
-  const sourceTypeText = String(finalSourceTypeGuess).toLowerCase();
-  const sourceQualityRecommendation = String((result as any)?.sourceQuality?.recommendation ?? '').toLowerCase();
-  const hasLowFidelitySourceProblem =
-    /low[ -]?fidelity source/i.test(finalSourceQualityLabel) ||
-    /low[ -]?fidelity/i.test(sourceQualityText) ||
-    sourceQualityRecommendation.includes('not recommended') ||
-    String(sourceQuality?.masteringReadiness ?? '').toLowerCase().includes('not recommended');
 
   if ((/low[ -]?fidelity source/i.test(finalSourceQualityLabel) || /low[ -]?fidelity/i.test(sourceQualityText)) && sourceTypeText.includes("mono")) {
     analysisState.primaryIssue = 'mono low-fidelity source';
@@ -503,7 +544,18 @@ function buildSoundProfile(
   else if (tooQuiet) finalProfile = selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
   else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
   else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
-  else if (bassHeavy) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
+  else if (bassHeavy && !isVocalOrAcappella) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
+  console.log("SoundProfile debug", {
+    fileName,
+    sourceQuality: finalSourceQualityLabel,
+    sourceTypeGuess: finalSourceTypeGuess,
+    channelMode,
+    isMono: isMonoSourceForDebug,
+    isVocalOrAcappella,
+    lowBassEnergy,
+    vocalMidEnergy,
+    finalProfileTitle: finalProfile
+  });
   console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel: sourceQualityRating, sourceType, isMonoSource, isNarrowStereo, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
   logFinalSoundProfileDecision(finalProfile);
   return finalProfile;
