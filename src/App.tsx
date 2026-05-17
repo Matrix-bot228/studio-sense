@@ -1781,13 +1781,13 @@ export default function App() {
           ? 'Low-fidelity / restoration-style source'
           : soundProfile;
   const displayPrimaryIssue =
-    sourceQuality?.rating === 'Low Fidelity Source' && sourceTypeGuessText.includes('mono')
+    sourceQualityText.includes('low fidelity') && sourceTypeGuessText.includes('mono')
       ? 'low-fidelity mono source / restoration needed'
-      : sourceQuality?.rating === 'Low Fidelity Source' && sourceTypeGuessText.includes('mp3/compressed')
+      : sourceQualityText.includes('low fidelity') && sourceTypeGuessText.includes('mp3/compressed')
         ? 'compressed source cleanup needed'
-        : sourceQuality?.rating === 'Low Fidelity Source'
+        : sourceQualityText.includes('low fidelity')
           ? 'low-fidelity source / restoration needed'
-          : analysisState?.primaryIssue ?? '—';
+          : analysisState?.primaryIssue ?? 'analyzing source';
   const soundProfileDebugLine = {
     fileName: fileName || 'missing',
     sourceQuality: sourceQuality?.rating ?? 'missing',
