@@ -381,7 +381,7 @@ function buildSoundProfile(
     analysisState.primaryIssue = 'mono low-fidelity source';
     analysisState.confidence = 'High';
     analysisState.mixCharacter = Array.from(new Set([...(analysisState.mixCharacter ?? []), 'Mono', 'Vintage', 'Dark', 'Low fidelity']));
-    return 'Low-fidelity mono recording';
+    return 'Low-fidelity mono source';
   }
 
   if (isOldTapeLike) {
@@ -423,7 +423,7 @@ function buildSoundProfile(
     analysisState.primaryIssue = 'mono low-fidelity source';
     analysisState.confidence = 'High';
     analysisState.mixCharacter = ['Mono', 'Vintage', 'Dark', 'Low fidelity'];
-    return 'Low-fidelity mono recording';
+    return 'Low-fidelity mono source';
   }
 
   console.log("BUILD SOUND PROFILE DEBUG", {
@@ -489,8 +489,8 @@ function buildSoundProfile(
     analysisState.primaryIssue = 'mono low-fidelity source';
     analysisState.confidence = 'High';
     analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Mono', 'Vintage', 'Dark', 'Low fidelity']));
-    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel: sourceQualityRating, sourceType, audioTypeLabel, finalSoundProfileTitle: 'Low-fidelity mono recording' });
-    return 'Low-fidelity mono recording';
+    console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel: sourceQualityRating, sourceType, audioTypeLabel, finalSoundProfileTitle: 'Low-fidelity mono source' });
+    return 'Low-fidelity mono source';
   }
 
   if (/mp3\/compressed/i.test(sourceType) && /streaming\s*\/\s*compressed audio/i.test(audioTypeLabel) && /stereo/i.test(sourceType) && !/mono/i.test(sourceType)) {
@@ -504,7 +504,7 @@ function buildSoundProfile(
   }
 
   if (isLowFidelitySource && isMonoOrNarrowSource) {
-    const finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono source' : 'Low-fidelity mono recording';
+    const finalProfile = selectedNotSure ? 'Studio Sense suspects a low-fidelity mono source' : 'Low-fidelity mono source';
     analysisState.primaryIssue = 'mono low-fidelity source';
     analysisState.confidence = 'High';
     analysisState.mixCharacter = Array.from(new Set([...analysisState.mixCharacter, 'Mono', 'Vintage', 'Dark', 'Low fidelity']));
@@ -537,13 +537,37 @@ function buildSoundProfile(
     // fall through to normal mix-title logic for clean WAV/studio-oriented sources
   }
 
+  const hasVintageCharacter = analysisState.mixCharacter.some((item) => /vintage/i.test(item));
+  const hasNarrowCharacter = analysisState.mixCharacter.some((item) => /narrow stereo/i.test(item));
+  const lowFidelityPrioritySignal =
+    /low[ -]?fidelity source/i.test(finalSourceQualityLabel) ||
+    /mono/i.test(sourceType) ||
+    hasNarrowCharacter ||
+    hasVintageCharacter ||
+    hasArchivalIndicators ||
+    String(sourceQuality?.masteringReadiness ?? '').toLowerCase().includes('not recommended') ||
+    sourceQualityRecommendation.includes('not recommended');
+
+  if (lowFidelityPrioritySignal) {
+    analysisState.confidence = analysisState.confidence || 'High';
+    analysisState.primaryIssue = /mono/i.test(sourceType) || hasNarrowCharacter || hasVintageCharacter || hasArchivalIndicators
+      ? 'Limited source quality, mono/narrow image, reduced clarity before mastering'
+      : 'Limited source quality before mastering';
+
+    const finalProfile = (/mono/i.test(sourceType) || hasNarrowCharacter || hasVintageCharacter || hasArchivalIndicators)
+      ? 'Low-fidelity mono source'
+      : 'Low-fidelity source recording';
+    logFinalSoundProfileDecision(finalProfile);
+    return finalProfile;
+  }
+
   let finalProfile = selectedNotSure ? `Studio Sense suspects: ${analysisState.profile}` : analysisState.profile;
-  if (bassHeavy && tooQuiet) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
+  if (bassHeavy && tooQuiet && !lowFidelityPrioritySignal) finalProfile = selectedNotSure ? 'Possible low-end heavy unmastered mix' : 'Low-end heavy mix';
   else if (tooQuiet && darkTone) finalProfile = selectedNotSure ? 'Studio Sense suspects a quiet, dark mix needing gain' : 'Quiet dark mix needing gain';
   else if (tooQuiet) finalProfile = selectedNotSure ? 'Studio Sense suspects low loudness before mastering' : 'Dynamic low-loudness master';
   else if (darkTone && !releaseReady) finalProfile = selectedNotSure ? 'Possible warm vintage-style balance' : 'Warm vintage-style balance';
   else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
-  else if (bassHeavy && !isVocalOrAcappella) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
+  else if (bassHeavy && !isVocalOrAcappella && !lowFidelityPrioritySignal) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
   console.log("SoundProfile debug", {
     fileName,
     sourceQuality: finalSourceQualityLabel,
@@ -1733,7 +1757,7 @@ export default function App() {
     finalPrimaryIssue = 'vocal cleanup before mastering';
     finalMixCharacter = 'Vocal-focused • Mono • Vintage • Dark • Soft • Low fidelity';
   } else if (isMonoSource && isLowFidelitySource) {
-    finalSoundProfileTitle = 'Low-fidelity mono recording';
+    finalSoundProfileTitle = 'Low-fidelity mono source';
     finalPrimaryIssue = 'source cleanup before mastering';
     finalMixCharacter = 'Mono • Vintage • Dark • Soft • Low fidelity';
   } else if (isLowFidelitySource) {
@@ -1834,6 +1858,13 @@ export default function App() {
   const isPreAnalysis = !analysisStarted;
   const goalVsFound = buildGoalVsFoundSummary(result, userIntent);
   const secondOpinion = buildSecondOpinion(result, analysisState, priorityFix, userIntent);
+  console.log("RENDERED SOUND PROFILE CARD", {
+    title: displaySoundProfileTitle,
+    sourceQuality: sourceQuality?.rating ?? visibleSourceQualityText,
+    sourceTypeGuess: sourceQuality?.sourceTypeGuess ?? visibleSourceTypeText,
+    mixCharacter: displaySoundProfile?.mixCharacter,
+    primaryIssues: displaySoundProfile?.primaryIssue
+  });
   return (
     <main className="app-shell">
       <section className="card compact">
