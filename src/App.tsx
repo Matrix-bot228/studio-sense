@@ -57,8 +57,6 @@ type SourceQualityAssessment = {
   notMasteredYet: boolean;
 };
 
-type SourceQualityResult = SourceQualityAssessment;
-
 type ProblemArea = {
   id: string;
   startSec: number;
@@ -1315,154 +1313,13 @@ function buildPlainEnglishSummary(result: AnalysisResult, sourceQuality: SourceQ
   return { hearing, why, next, healthy };
 }
 
-function dbToLinear(db: number): number {
-  return Math.pow(10, db / 20);
-}
-
-function encodeAudioBufferToWavBlob(buffer: AudioBuffer): Blob {
-  const numChannels = buffer.numberOfChannels;
-  const sampleRate = buffer.sampleRate;
-  const numFrames = buffer.length;
-  const bytesPerSample = 2;
-  const blockAlign = numChannels * bytesPerSample;
-  const dataSize = numFrames * blockAlign;
-  const wavBuffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(wavBuffer);
-
-  const writeString = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  let offset = 44;
-  for (let i = 0; i < numFrames; i += 1) {
-    for (let ch = 0; ch < numChannels; ch += 1) {
-      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-      offset += bytesPerSample;
-    }
-  }
-  return new Blob([wavBuffer], { type: 'audio/wav' });
-}
-
-async function autoFixTrack(file: File, result: AnalysisResult, sourceQuality: SourceQualityResult): Promise<Blob> {
-  const srcArrayBuffer = await file.arrayBuffer();
-  const decodeContext = new AudioContext();
-  const decoded = await decodeContext.decodeAudioData(srcArrayBuffer.slice(0));
-  await decodeContext.close();
-
-  const offline = new OfflineAudioContext(decoded.numberOfChannels, decoded.length, decoded.sampleRate);
-  const source = offline.createBufferSource();
-  source.buffer = decoded;
-
-  const inputGain = offline.createGain();
-  inputGain.gain.value = 1;
-
-  const highPass = offline.createBiquadFilter();
-  highPass.type = 'highpass';
-  highPass.frequency.value = 20;
-  highPass.Q.value = 0.707;
-
-  const lowMidCut = offline.createBiquadFilter();
-  lowMidCut.type = 'peaking';
-  lowMidCut.frequency.value = 260;
-  lowMidCut.Q.value = 0.9;
-  lowMidCut.gain.value = 0;
-
-  const clarityBoost = offline.createBiquadFilter();
-  clarityBoost.type = 'peaking';
-  clarityBoost.frequency.value = 3800;
-  clarityBoost.Q.value = 1;
-  clarityBoost.gain.value = 0;
-
-  const lowShelf = offline.createBiquadFilter();
-  lowShelf.type = 'lowshelf';
-  lowShelf.frequency.value = 120;
-  lowShelf.gain.value = 0;
-
-  const outputGain = offline.createGain();
-  outputGain.gain.value = 1;
-
-  const isLowFi = sourceQuality.rating === 'Low Fidelity Source';
-  const isGoodProduction = sourceQuality.rating === 'Good Production Source';
-  const isMono = (result.channels ?? 2) === 1;
-  const sourceType = sourceQuality.sourceTypeGuess.toLowerCase();
-  const isCompressedStereo = sourceType.includes('mp3/compressed') && sourceType.includes('stereo');
-  const low = result.lowPercent ?? 0;
-  const tooQuiet = typeof (result.lufsEstimate ?? result.lufs) === 'number' && (result.lufsEstimate ?? result.lufs)! < -16;
-
-  if (isLowFi && isMono) {
-    highPass.frequency.value = 50;
-    lowMidCut.gain.value = -2.0;
-    clarityBoost.gain.value = low < 42 ? 1.2 : 0.6;
-  } else if (isLowFi && isCompressedStereo) {
-    highPass.frequency.value = 45;
-    lowShelf.gain.value = -1.2;
-    lowMidCut.gain.value = -1.6;
-    clarityBoost.gain.value = 0.4;
-  } else if (isGoodProduction && low > 52) {
-    lowShelf.gain.value = -1.5;
-    lowMidCut.gain.value = -1.2;
-  }
-
-  if (tooQuiet) {
-    outputGain.gain.value = dbToLinear(2.5);
-  }
-
-  source.connect(inputGain);
-  inputGain.connect(highPass);
-  highPass.connect(lowShelf);
-  lowShelf.connect(lowMidCut);
-  lowMidCut.connect(clarityBoost);
-  clarityBoost.connect(outputGain);
-  outputGain.connect(offline.destination);
-
-  source.start(0);
-  const rendered = await offline.startRendering();
-
-  let peak = 0;
-  for (let ch = 0; ch < rendered.numberOfChannels; ch += 1) {
-    const data = rendered.getChannelData(ch);
-    for (let i = 0; i < data.length; i += 1) peak = Math.max(peak, Math.abs(data[i]));
-  }
-
-  const targetPeakLinear = dbToLinear(-1);
-  if (peak > targetPeakLinear && peak > 0) {
-    const normalized = new AudioBuffer({ numberOfChannels: rendered.numberOfChannels, length: rendered.length, sampleRate: rendered.sampleRate });
-    const scale = targetPeakLinear / peak;
-    for (let ch = 0; ch < rendered.numberOfChannels; ch += 1) {
-      const src = rendered.getChannelData(ch);
-      const dst = normalized.getChannelData(ch);
-      for (let i = 0; i < src.length; i += 1) dst[i] = src[i] * scale;
-    }
-    return encodeAudioBufferToWavBlob(normalized);
-  }
-
-  return encodeAudioBufferToWavBlob(rendered);
-}
-
-
 export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [, setUploadedFile] = useState<File | null>(null);
   const [fixedAudioUrl, setFixedAudioUrl] = useState<string | null>(null);
-  const [fixedAudioBlob, setFixedAudioBlob] = useState<Blob | null>(null);
   const [isAutoFixing, setIsAutoFixing] = useState(false);
-  const [autoFixError, setAutoFixError] = useState<string | null>(null);
+  const [autoFixMessage, setAutoFixMessage] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [startSec, setStartSec] = useState<number | null>(null);
@@ -1594,8 +1451,7 @@ export default function App() {
     setSectionResult(null); setStartSec(null); setEndSec(null); setManualProblemAreas([]); setProblemNote(''); setResult(null); setAutoMarkers([]);
     setAnalysisDebug(null);
     setLastAnalysisError(null);
-    setAutoFixError(null);
-    setFixedAudioBlob(null);
+    setAutoFixMessage("");
     if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
     setFixedAudioUrl(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -1709,8 +1565,7 @@ export default function App() {
     setIsAnalyzing(false);
     setLastAnalysisError(null);
     setSafeModeFixPlan(null);
-    setAutoFixError(null);
-    setFixedAudioBlob(null);
+    setAutoFixMessage("");
     if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
     setFixedAudioUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1761,31 +1616,18 @@ export default function App() {
     coachNote: autoFixPlan.readiness[0] ?? 'Keep refining with small, intentional moves and re-check after each change.'
   } : null;
 
-  const handleAutoFixTrack = useCallback(async () => {
-    if (!uploadedFile || !result || !sourceQuality) return;
-    setIsAutoFixing(true);
-    setAutoFixError(null);
+  async function handleAutoFix() {
     try {
-      const fixedBlob = await autoFixTrack(uploadedFile, result, sourceQuality);
-      if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
-      setFixedAudioBlob(fixedBlob);
-      setFixedAudioUrl(URL.createObjectURL(fixedBlob));
+      setIsAutoFixing(true);
+      setAutoFixMessage("Auto fixing...");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      setAutoFixMessage("Auto Fix engine ready. Processing will be added next.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Auto fix failed.';
-      setAutoFixError(message);
+      setAutoFixMessage("Auto Fix failed. Please try again.");
     } finally {
       setIsAutoFixing(false);
     }
-  }, [uploadedFile, result, sourceQuality, fixedAudioUrl]);
-
-  const handleDownloadFixedWav = useCallback(() => {
-    if (!fixedAudioBlob) return;
-    const anchor = document.createElement('a');
-    const baseName = fileName.replace(/\.[^/.]+$/, '');
-    anchor.href = fixedAudioUrl ?? URL.createObjectURL(fixedAudioBlob);
-    anchor.download = `${baseName}_auto_fixed.wav`;
-    anchor.click();
-  }, [fixedAudioBlob, fixedAudioUrl, fileName]);
+  }
 
   const runSafeModeAutoFix = useCallback(() => {
     setSafeModeFixPlan(buildSafeModeFixPlan(result));
@@ -2157,7 +1999,14 @@ export default function App() {
     onDurationChange={setDuration}
   />}
 
-  {analysisStarted && result && sourceQuality ? <section className="guidance"><h2>Auto Fix v1</h2>{isAutoFixing ? <p>Auto fixing...</p> : <button className="upload-btn" type="button" onClick={handleAutoFixTrack} disabled={!uploadedFile}>Auto Fix This Track</button>}{autoFixError ? <p className="status">Auto fix failed: {autoFixError}</p> : null}{fixedAudioUrl ? <><h3>Auto Fixed Version</h3><audio controls src={fixedAudioUrl} /><div className="workflow-row"><button className="upload-btn" type="button" onClick={handleDownloadFixedWav}>Download Fixed WAV</button></div></> : null}</section> : null}
+  {analysisStarted && result ? <section className="guidance">
+    <h2>🎛️ Auto Fix</h2>
+    <p>Use Studio Sense to create an improved version of this track.</p>
+    <button className="upload-btn" type="button" onClick={handleAutoFix} disabled={isAutoFixing}>
+      {isAutoFixing ? "Auto fixing..." : "Auto Fix This Track"}
+    </button>
+    {autoFixMessage ? <p>{autoFixMessage}</p> : null}
+  </section> : null}
 
 
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{displaySoundProfileTitle}</p><p><strong>Confidence:</strong> {displaySoundProfile.confidence}</p><p><strong>Primary issue:</strong> {displayPrimaryIssue}</p><p><strong>Mix Character:</strong> {displaySoundProfile.mixCharacter}</p><p style={{ color: "yellow", fontWeight: "bold" }}>DEBUG title source = sourceQuality: {displayedSourceQuality} sourceTypeGuess: {displayedSourceTypeGuess} readiness: {displayedMasteringReadiness}</p><p style={{ marginTop: 0, fontSize: "0.85rem", opacity: 0.85 }}><strong>DEBUG:</strong><br />fileName: {soundProfileDebugLine.fileName}<br />sourceQuality: {soundProfileDebugLine.sourceQuality}<br />sourceTypeGuess: {soundProfileDebugLine.sourceTypeGuess}<br />coachNote: {soundProfileDebugLine.coachNote}<br />isVocalSource: {String(soundProfileDebugLine.isVocalSource)}<br />isMono: {String(soundProfileDebugLine.isMono)}<br />finalSoundProfileTitle: {soundProfileDebugLine.finalSoundProfileTitle}</p></section>
