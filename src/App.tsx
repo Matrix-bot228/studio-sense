@@ -336,6 +336,15 @@ function buildSoundProfile(
   fileName = ''
 ): string {
   if (!analysisState) return 'Analyzing sound profile…';
+  const logFinalSoundProfileDecision = (title: string) => {
+    console.log("FINAL SOUND PROFILE DECISION", {
+      title,
+      sourceQuality,
+      masteringReadiness: sourceQuality?.masteringReadiness,
+      mixCharacter: analysisState.mixCharacter,
+      primaryIssues: analysisState.primaryIssue
+    });
+  };
   const context = result ? getSourceContext(result, fileName) : null;
   const { isVisibleLowFidelity, isMonoOrNarrow, isOldTapeLike } = getSoundProfileDebugFlags(result, fileName);
 
@@ -363,6 +372,12 @@ function buildSoundProfile(
   const finalSourceTypeGuess = sourceQuality?.sourceTypeGuess ?? sourceTypeGuess ?? '';
   const sourceQualityText = String(finalSourceQualityLabel).toLowerCase();
   const sourceTypeText = String(finalSourceTypeGuess).toLowerCase();
+  const sourceQualityRecommendation = String((result as any)?.sourceQuality?.recommendation ?? '').toLowerCase();
+  const hasLowFidelitySourceProblem =
+    /low[ -]?fidelity source/i.test(finalSourceQualityLabel) ||
+    /low[ -]?fidelity/i.test(sourceQualityText) ||
+    sourceQualityRecommendation.includes('not recommended') ||
+    String(sourceQuality?.masteringReadiness ?? '').toLowerCase().includes('not recommended');
 
   if ((/low[ -]?fidelity source/i.test(finalSourceQualityLabel) || /low[ -]?fidelity/i.test(sourceQualityText)) && sourceTypeText.includes("mono")) {
     analysisState.primaryIssue = 'mono low-fidelity source';
@@ -405,6 +420,29 @@ function buildSoundProfile(
   const hasArchivalIndicators = archivalIndicators || highFrequencyRolloff || noisyHighs || unstablePeaks || weakRms || archivalSignalCount >= 3 || restorationIntent;
   const hasSevereQualityProblems = multiplePoorSpectralIndicators || archivalSignalCount >= 3 || (weakRms && unstablePeaks);
   const isProfessionalCompressedSource = isCompressedSource && !isMonoOrNarrowSource && !hasArchivalIndicators && !hasSevereQualityProblems;
+
+  // Source quality issues must have highest priority over tonal/loudness profile rules.
+  if (hasLowFidelitySourceProblem) {
+    const lowFiCharacterHints = ['narrow', 'mono', 'vintage', 'dark', 'soft', 'warm'];
+    const mixCharacterText = analysisState.mixCharacter.join(' ').toLowerCase();
+    const hasLowFiCharacterHints =
+      lowFiCharacterHints.some((hint) => mixCharacterText.includes(hint)) ||
+      isMonoOrNarrowSource ||
+      isMonoOrNarrow ||
+      /mono|narrow/.test(sourceTypeText);
+
+    if (hasLowFiCharacterHints) {
+      analysisState.primaryIssue = 'Limited source quality, narrow stereo image, reduced clarity';
+      const finalProfile = 'Low-fidelity archival recording';
+      logFinalSoundProfileDecision(finalProfile);
+      return finalProfile;
+    }
+
+    analysisState.primaryIssue = 'Limited source quality before mastering';
+    const finalProfile = 'Low-fidelity source recording';
+    logFinalSoundProfileDecision(finalProfile);
+    return finalProfile;
+  }
 
   // Hard overrides must run before any tonal/loudness logic.
   if (/mono/i.test(sourceType) && /low fidelity source/i.test(sourceQualityRating)) {
@@ -467,6 +505,7 @@ function buildSoundProfile(
   else if (releaseReady && !analysisState.majorProblem) finalProfile = 'Streaming-ready balanced master';
   else if (bassHeavy) finalProfile = selectedNotSure ? 'Possible low-end buildup' : 'Low-end heavy mix';
   console.debug('[Studio Sense] Sound Profile Decision', { sourceQualityLabel: sourceQualityRating, sourceType, isMonoSource, isNarrowStereo, stereoWidth, highFrequencyRolloff, noisyHighs, unstablePeaks, weakRms, archivalIndicators, finalSoundProfileTitle: finalProfile });
+  logFinalSoundProfileDecision(finalProfile);
   return finalProfile;
 }
 
