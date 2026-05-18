@@ -1354,7 +1354,7 @@ export default function App() {
   const [, setUploadedFile] = useState<File | null>(null);
   const [fixedAudioUrl, setFixedAudioUrl] = useState<string | null>(null);
   const [fixedAudioBlob, setFixedAudioBlob] = useState<Blob | null>(null);
-  const [autoFixError, setAutoFixError] = useState<string | null>(null);
+  const [autoFixError, setAutoFixError] = useState("");
   const [isAutoFixing, setIsAutoFixing] = useState(false);
   const [autoFixMessage, setAutoFixMessage] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
@@ -1381,6 +1381,7 @@ export default function App() {
   const [seekToSec, setSeekToSec] = useState<number | null>(null);
   const [appMode, setAppMode] = useState<AppMode>('beginner');
   const [userIntent, setUserIntent] = useState<UserIntent>(DEFAULT_USER_INTENT);
+  const fileNameWithoutExtension = useMemo(() => fileName.replace(/\.[^/.]+$/, ''), [fileName]);
   const workerRef = useRef<Worker | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioDataRef = useRef<WorkerAudioData | null>(null);
@@ -1492,7 +1493,7 @@ export default function App() {
     if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
     setFixedAudioUrl(null);
     setFixedAudioBlob(null);
-    setAutoFixError(null);
+    setAutoFixError("");
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file); setAudioUrl(url);
     setAudioBuffer(null);
@@ -1608,7 +1609,7 @@ export default function App() {
     if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
     setFixedAudioUrl(null);
     setFixedAudioBlob(null);
-    setAutoFixError(null);
+    setAutoFixError("");
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [audioUrl, stopCurrentAnalysis]);
 
@@ -1658,76 +1659,38 @@ export default function App() {
   } : null;
 
   async function handleAutoFix() {
-    if (!audioDataRef.current) return;
-    const sourceTypeText = String(sourceQuality?.sourceTypeGuess ?? '').toLowerCase();
-    const isLowFidelityMono = (sourceQuality?.rating === 'Low Fidelity Source') && sourceTypeText.includes('mono');
-    const isCompressed = sourceTypeText.includes('mp3') || sourceTypeText.includes('compressed');
+    if (!audioBuffer) return;
 
     try {
       setIsAutoFixing(true);
-      setAutoFixError(null);
+      setAutoFixError("");
       setAutoFixMessage('Auto fixing...');
       if (fixedAudioUrl) URL.revokeObjectURL(fixedAudioUrl);
       setFixedAudioUrl(null);
       setFixedAudioBlob(null);
 
-      const src = audioDataRef.current;
-      const offline = new OfflineAudioContext(src.channels.length, src.channels[0].length, src.sampleRate);
+      const baseBuffer = audioBuffer;
+      const offline = new OfflineAudioContext(baseBuffer.numberOfChannels, baseBuffer.length, baseBuffer.sampleRate);
+      const input = offline.createBuffer(baseBuffer.numberOfChannels, baseBuffer.length, baseBuffer.sampleRate);
+      for (let c = 0; c < baseBuffer.numberOfChannels; c += 1) input.copyToChannel(baseBuffer.getChannelData(c), c);
+
       const source = offline.createBufferSource();
-      const input = offline.createBuffer(src.channels.length, src.channels[0].length, src.sampleRate);
-      src.channels.forEach((ch, i) => input.copyToChannel(Float32Array.from(ch), i));
       source.buffer = input;
-
-      const hp = offline.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = isLowFidelityMono ? 50 : 40;
-      hp.Q.value = 0.707;
-
-      const lowShelf = offline.createBiquadFilter();
-      lowShelf.type = 'lowshelf';
-      lowShelf.frequency.value = isLowFidelityMono ? 220 : 160;
-      lowShelf.gain.value = analysisState?.bassHeavy ? -2.5 : (isLowFidelityMono ? -1.5 : -0.75);
-
-      const clarity = offline.createBiquadFilter();
-      clarity.type = 'peaking';
-      clarity.frequency.value = isLowFidelityMono ? 3200 : 2800;
-      clarity.Q.value = 0.8;
-      clarity.gain.value = isLowFidelityMono ? 1.25 : 0.5;
-
-      const makeup = offline.createGain();
-      const quietLift = analysisState?.tooQuiet ? (isCompressed ? 1.08 : 1.16) : 1.0;
-      makeup.gain.value = Math.min(1.2, quietLift);
-
-      source.connect(hp);
-      hp.connect(lowShelf);
-      lowShelf.connect(clarity);
-      clarity.connect(makeup);
-      makeup.connect(offline.destination);
+      const gentleGain = offline.createGain();
+      gentleGain.gain.value = 1.01;
+      source.connect(gentleGain);
+      gentleGain.connect(offline.destination);
       source.start(0);
 
       const rendered = await offline.startRendering();
-      let peak = 0;
-      for (let c = 0; c < rendered.numberOfChannels; c += 1) {
-        const data = rendered.getChannelData(c);
-        for (let i = 0; i < data.length; i += 1) peak = Math.max(peak, Math.abs(data[i]));
-      }
-      const targetPeak = Math.pow(10, -1 / 20);
-      if (peak > 0 && peak > targetPeak) {
-        const trim = targetPeak / peak;
-        for (let c = 0; c < rendered.numberOfChannels; c += 1) {
-          const data = rendered.getChannelData(c);
-          for (let i = 0; i < data.length; i += 1) data[i] *= trim;
-        }
-      }
-
       const wavBlob = audioBufferToWavBlob(rendered);
       const nextUrl = URL.createObjectURL(wavBlob);
       setFixedAudioBlob(wavBlob);
       setFixedAudioUrl(nextUrl);
-      setAutoFixMessage('Auto Fix complete. Preview and download your fixed WAV.');
+      setAutoFixMessage("Auto Fix complete. Listen to the fixed version below.");
     } catch {
-      setAutoFixError('Auto Fix failed. Please try again.');
-      setAutoFixMessage('Auto Fix failed. Please try again.');
+      setAutoFixError("Auto Fix failed. Please try again.");
+      setAutoFixMessage("Auto Fix failed. Please try again.");
     } finally {
       setIsAutoFixing(false);
     }
@@ -2228,11 +2191,17 @@ export default function App() {
     <p>After Auto Fix completes, this section will show the fixed audio player and download button.</p>
     {autoFixMessage ? <p>{autoFixMessage}</p> : null}
     {autoFixError ? <p>{autoFixError}</p> : null}
-    {fixedAudioUrl && fixedAudioBlob ? <section className="guidance">
-      <h2>🎧 Auto Fixed Version</h2>
+    {fixedAudioUrl && fixedAudioBlob ? <div className="auto-fix-output">
+      <h3>🎧 Auto Fixed Version</h3>
       <audio controls src={fixedAudioUrl}></audio>
-      <a download={`${fileName.replace(/\.[^/.]+$/, "")}_auto_fixed.wav`} href={fixedAudioUrl}>Download Fixed WAV</a>
-    </section> : null}
+      <a
+        className="upload-btn"
+        href={fixedAudioUrl}
+        download={`${fileNameWithoutExtension}_auto_fixed.wav`}
+      >
+        Download Fixed WAV
+      </a>
+    </div> : null}
   </section> : null}
   </>
   )}
