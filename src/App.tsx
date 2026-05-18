@@ -2103,22 +2103,6 @@ export default function App() {
     onDurationChange={setDuration}
   />}
 
-  {analysisStarted && result ? <section className="guidance">
-    <h2>🎛️ Auto Fix</h2>
-    <p>Use Studio Sense to create an improved version of this track.</p>
-    <button className="upload-btn" type="button" onClick={handleAutoFix} disabled={isAutoFixing}>
-      {isAutoFixing ? "Auto fixing..." : "Auto Fix This Track"}
-    </button>
-    {autoFixMessage ? <p>{autoFixMessage}</p> : null}
-    {autoFixError ? <p>{autoFixError}</p> : null}
-    {fixedAudioUrl && fixedAudioBlob ? <section className="guidance">
-      <h2>🎧 Auto Fixed Version</h2>
-      <audio controls src={fixedAudioUrl}></audio>
-      <a download={`${fileName.replace(/\.[^/.]+$/, "")}_auto_fixed.wav`} href={fixedAudioUrl}>Download Fixed WAV</a>
-    </section> : null}
-  </section> : null}
-
-
   <section className="sound-profile-card"><h2>🎧 Sound Profile</h2><p>{displaySoundProfileTitle}</p><p><strong>Confidence:</strong> {displaySoundProfile.confidence}</p><p><strong>Primary issue:</strong> {displayPrimaryIssue}</p><p><strong>Mix Character:</strong> {displaySoundProfile.mixCharacter}</p><p style={{ color: "yellow", fontWeight: "bold" }}>DEBUG title source = sourceQuality: {displayedSourceQuality} sourceTypeGuess: {displayedSourceTypeGuess} readiness: {displayedMasteringReadiness}</p><p style={{ marginTop: 0, fontSize: "0.85rem", opacity: 0.85 }}><strong>DEBUG:</strong><br />fileName: {soundProfileDebugLine.fileName}<br />sourceQuality: {soundProfileDebugLine.sourceQuality}<br />sourceTypeGuess: {soundProfileDebugLine.sourceTypeGuess}<br />coachNote: {soundProfileDebugLine.coachNote}<br />isVocalSource: {String(soundProfileDebugLine.isVocalSource)}<br />isMono: {String(soundProfileDebugLine.isMono)}<br />finalSoundProfileTitle: {soundProfileDebugLine.finalSoundProfileTitle}</p></section>
   <section className="sound-profile-card"><h2>SOURCE QUALITY</h2><p><strong>Source Quality:</strong> <span className={`pill ${toneForSourceQuality(sourceQuality?.rating)}`}>{sourceQuality?.rating ?? '—'}</span></p><p><strong>Confidence:</strong> {typeof sourceQuality?.confidence === 'number' ? `${sourceQuality.confidence}%` : '—'}</p><p><strong>Mastering Readiness:</strong> <span className={`pill ${toneForReadiness(result?.readiness)}`}>{sourceQuality?.masteringReadiness ?? '—'}</span></p><p><strong>Source type guess:</strong> {sourceQuality?.sourceTypeGuess ?? 'Run analysis to detect source type.'}</p><p><strong>Coach note:</strong> {isCreatorMode && result ? `${sourceQuality?.sourceTypeGuess ?? ''}${typeof result.peakDb === 'number' ? `, peak ${result.peakDb.toFixed(1)} dBFS` : ''}${typeof result.lufsEstimate === 'number' ? `, LUFS ${result.lufsEstimate.toFixed(1)}.` : '.'} ${sourceQuality?.note ?? ''}` : sourceQuality?.note ?? 'Run analysis for source guidance.'}</p><p><em>Mastering readiness is different from source quality. Professional studio exports are often quieter before mastering. Raw WAV files may sound less exciting before final mastering.</em></p></section>
   <section className="sound-profile-card"><h2>📼 Audio Type</h2><p>{audioType}</p><p><strong>Source Confidence:</strong> {sourceConfidence}</p></section>
@@ -2235,6 +2219,21 @@ export default function App() {
       <p className="empty">Run analysis, then tap “Build Listening Coach Plan” for a structured listening coach plan.</p>
     )}
   </section>
+  {analysisStarted && result ? <section className="guidance">
+    <h2>🎛️ Auto Fix</h2>
+    <p>You can follow the steps above manually, or let Studio Sense apply a safe automatic fix based on this analysis.</p>
+    <button className="upload-btn" type="button" onClick={handleAutoFix} disabled={isAutoFixing}>
+      {isAutoFixing ? "Auto fixing..." : "Auto Fix This Track"}
+    </button>
+    <p>After Auto Fix completes, this section will show the fixed audio player and download button.</p>
+    {autoFixMessage ? <p>{autoFixMessage}</p> : null}
+    {autoFixError ? <p>{autoFixError}</p> : null}
+    {fixedAudioUrl && fixedAudioBlob ? <section className="guidance">
+      <h2>🎧 Auto Fixed Version</h2>
+      <audio controls src={fixedAudioUrl}></audio>
+      <a download={`${fileName.replace(/\.[^/.]+$/, "")}_auto_fixed.wav`} href={fixedAudioUrl}>Download Fixed WAV</a>
+    </section> : null}
+  </section> : null}
   </>
   )}
       </section>
