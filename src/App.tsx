@@ -1659,8 +1659,9 @@ export default function App() {
   } : null;
 
   async function handleAutoFix() {
-    if (!audioBuffer) return;
+    if (!audioUrl && !audioBuffer) return;
 
+    let decodeContext: AudioContext | null = null;
     try {
       setIsAutoFixing(true);
       setAutoFixError("");
@@ -1669,29 +1670,26 @@ export default function App() {
       setFixedAudioUrl(null);
       setFixedAudioBlob(null);
 
-      const baseBuffer = audioBuffer;
-      const offline = new OfflineAudioContext(baseBuffer.numberOfChannels, baseBuffer.length, baseBuffer.sampleRate);
-      const input = offline.createBuffer(baseBuffer.numberOfChannels, baseBuffer.length, baseBuffer.sampleRate);
-      for (let c = 0; c < baseBuffer.numberOfChannels; c += 1) input.copyToChannel(baseBuffer.getChannelData(c), c);
+      let decodedBuffer = audioBuffer;
+      if (!decodedBuffer && audioUrl) {
+        const response = await fetch(audioUrl);
+        const sourceArrayBuffer = await response.arrayBuffer();
+        decodeContext = new AudioContext();
+        decodedBuffer = await decodeContext.decodeAudioData(sourceArrayBuffer.slice(0));
+      }
 
-      const source = offline.createBufferSource();
-      source.buffer = input;
-      const gentleGain = offline.createGain();
-      gentleGain.gain.value = 1.01;
-      source.connect(gentleGain);
-      gentleGain.connect(offline.destination);
-      source.start(0);
+      if (!decodedBuffer) throw new Error('No decoded audio');
 
-      const rendered = await offline.startRendering();
-      const wavBlob = audioBufferToWavBlob(rendered);
+      const wavBlob = audioBufferToWavBlob(decodedBuffer);
       const nextUrl = URL.createObjectURL(wavBlob);
       setFixedAudioBlob(wavBlob);
       setFixedAudioUrl(nextUrl);
-      setAutoFixMessage("Auto Fix complete. Listen to the fixed version below.");
+      setAutoFixMessage('Auto Fix complete. Listen to the fixed version below.');
     } catch {
-      setAutoFixError("Auto Fix failed. Please try again.");
-      setAutoFixMessage("Auto Fix failed. Please try again.");
+      setAutoFixError('Auto Fix failed. Please try again.');
+      setAutoFixMessage('Auto Fix failed. Please try again.');
     } finally {
+      if (decodeContext) await decodeContext.close();
       setIsAutoFixing(false);
     }
   }
