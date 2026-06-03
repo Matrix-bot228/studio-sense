@@ -2006,6 +2006,7 @@ export default function App() {
       </div>
       <div className="workflow-row">
         {audioDataRef.current ? <p className="filename">Uploaded: {fileName}</p> : null}
+        {audioUrl ? <button type="button" className="upload-btn" onClick={handleNewTrack} disabled={loading || isAnalyzing}>New Track</button> : null}
       </div>
       <div className="workflow-row">
         <button className="upload-btn start-analysis-btn" type="button" onClick={handleStartAnalysis} disabled={!audioDataRef.current || loading || isAnalyzing}>
